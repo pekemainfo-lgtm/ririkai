@@ -113,7 +113,8 @@ export function aggregateCardsByDate(cards, today) {
     if (createdDate) ensure(createdDate).newCards += 1;
 
     const nextReviewDate = card.review && card.review.nextReviewDate;
-    if (card.status === "active" && nextReviewDate) {
+    const mastered = card.review && card.review.mastered;
+    if (card.status === "active" && !mastered && nextReviewDate) {
       ensure(nextReviewDate).scheduledReviews += 1;
       if (today && nextReviewDate <= today) dueCount += 1;
     }

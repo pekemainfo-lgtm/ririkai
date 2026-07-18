@@ -42,3 +42,16 @@ test("aggregateCardsByDate は空配列で 0 を返す", () => {
   assert.equal(dueCount, 0);
   assert.equal(needsReviewCount, 0);
 });
+
+test("aggregateCardsByDate は mastered(リリカイ済み)カードを予定・due から除外する", () => {
+  const withMastered = [
+    { status: "active", createdAt: "2026-07-18T00:00:00.000Z", review: { nextReviewDate: "2026-07-18", mastered: true } },
+    { status: "active", createdAt: "2026-07-18T00:00:00.000Z", review: { nextReviewDate: "2026-07-18", mastered: false } }
+  ];
+  const { byDate, dueCount } = aggregateCardsByDate(withMastered, "2026-07-18");
+  // mastered は除外、活きているのは1枚だけ
+  assert.equal(dueCount, 1);
+  assert.equal(byDate["2026-07-18"].scheduledReviews, 1);
+  // newCards は status!=="merged" なので両方数える（採用実績は残す）
+  assert.equal(byDate["2026-07-18"].newCards, 2);
+});

@@ -81,9 +81,35 @@ export function buildSessionMarkdown(session) {
     "## 復習事項",
     bulletList(session.reviewItems),
     "",
+    "## ノートに書き写す内容",
+    bulletList(session.noteText),
+    "",
     "## 関連カード",
     "(なし)"
   ].join("\n");
 
   return `${frontMatter(session)}\n\n${body}\n`;
+}
+
+// 既存Markdownの front matter 内の noteImages ブロックだけを差し替える（本文は触らない）。
+// 後付けの写真添付でMarkdownの写真参照を正本に反映するために使う（§23.2）。
+export function replaceNoteImagesInFrontMatter(markdown, keys) {
+  const text = String(markdown || "");
+  if (!text.startsWith("---")) return text;
+
+  // 2つ目の "---"（front matter の終端）を探す。
+  const end = text.indexOf("\n---", 3);
+  if (end < 0) return text;
+
+  const head = text.slice(0, end); // front matter 本体（先頭の "---" を含む）
+  const rest = text.slice(end);     // "\n---" 以降（本文）
+
+  const newNoteImages = `noteImages:${yamlList(keys)}`;
+  // 既存の "noteImages:" 行とそのリスト項目（"  - ..."）を置換。無ければ末尾に追記。
+  const noteImagesRe = /noteImages:(?: \[\]|(?:\n {2}- .*)*)/;
+  const newHead = noteImagesRe.test(head)
+    ? head.replace(noteImagesRe, newNoteImages)
+    : `${head}\n${newNoteImages}`;
+
+  return `${newHead}${rest}`;
 }

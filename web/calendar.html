@@ -321,6 +321,8 @@
         ${confirmHtml}
         <h2>復習事項</h2>
         ${renderPointList(s.reviewItems)}
+        <h2>✍️ ノートに書き写す内容</h2>
+        ${renderPointList(s.noteText)}
         <h2>関連カード</h2>
         <p style="color:var(--muted)">${(s.cardIds || []).length}枚（<a href="cards.html">カード一覧</a>）</p>
         <h2>ノート写真</h2>

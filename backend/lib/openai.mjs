@@ -87,8 +87,15 @@ ${purposeInstruction}
   "misconceptions": ["誤解の可能性"],
   "confirmQuestions": ["確認質問"],
   "reviewItems": ["復習すべき事項"],
+  "noteText": ["紙のノートにそのまま書き写せる短い箇条書き"],
   "purposeJudgement": { "status": "達成", "reason": "短い理由" }
 }
+
+noteText のルール：
+- 学習者が紙のノートに手で書き写すことを想定した、短い箇条書きを5〜10個
+- 試験で使う要点・定義・違い・条件・数値・コマンド・例外を優先する
+- 1項目は1行に収まる短さにする。長い説明文にしない
+- そのまま書き写せる完結した表現にする（「〜とは」「A=…」「AとBの違い: …」など）
 
 入力情報：
 分野: ${subject}
@@ -168,6 +175,7 @@ function normalizeAnalysis(parsed) {
     misconceptions: toStringArray(parsed.misconceptions),
     confirmQuestions: toStringArray(parsed.confirmQuestions),
     reviewItems: toStringArray(parsed.reviewItems),
+    noteText: toStringArray(parsed.noteText),
     purposeJudgement
   };
 }

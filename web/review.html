@@ -9,13 +9,13 @@
     color-scheme: light dark;
     --fg: #1a1a1a; --bg: #ffffff; --border: #d0d0d0; --accent: #2563eb;
     --muted: #666; --error: #c0392b; --ok: #1e7e34; --cell-bg: #f7f7f8;
-    --good: #1e7e34; --uncertain: #b7791f; --bad: #c0392b;
+    --rikai: #7c3aed; --next: #2563eb;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --fg: #eaeaea; --bg: #121212; --border: #444; --accent: #60a5fa;
       --muted: #aaa; --error: #ff6b6b; --ok: #4ade80; --cell-bg: #1c1c1e;
-      --good: #4ade80; --uncertain: #eab308; --bad: #ff6b6b;
+      --rikai: #a78bfa; --next: #60a5fa;
     }
   }
   * { box-sizing: border-box; }
@@ -29,28 +29,50 @@
   .status { margin-top: 12px; white-space: pre-wrap; font-size: 0.9rem; color: var(--muted); }
   .status.error { color: var(--error); }
   .status.ok { color: var(--ok); }
-  .progress { font-size: 0.85rem; color: var(--muted); margin-bottom: 8px; }
+  .progress { font-size: 0.85rem; color: var(--muted); margin-bottom: 8px; text-align: center; }
+
+  /* フラッシュカード本体 */
   .card {
-    border: 1px solid var(--border); border-radius: 10px; padding: 18px; margin-top: 10px;
+    position: relative; border: 1px solid var(--border); border-radius: 14px;
+    padding: 22px 18px; margin-top: 10px; min-height: 240px;
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    text-align: center; cursor: pointer; background: var(--cell-bg);
+    user-select: none; transition: border-color 0.15s;
   }
-  .card .qtype { font-size: 0.7rem; background: var(--border); border-radius: 4px; padding: 1px 6px; }
-  .card .question { font-size: 1.15rem; font-weight: bold; margin: 10px 0; }
-  .card .answer { background: var(--cell-bg); border-radius: 8px; padding: 12px; margin-top: 8px; }
-  .card .answer h3 { margin: 0 0 4px; font-size: 0.85rem; color: var(--muted); }
-  .card .supplement { font-size: 0.9rem; margin-top: 8px; }
-  button {
-    padding: 10px 16px; border: none; border-radius: 6px; color: #fff; font-size: 1rem; cursor: pointer;
+  .card:active { border-color: var(--accent); }
+  .card .face-label { position: absolute; top: 10px; left: 14px; font-size: 0.7rem; color: var(--muted); }
+  .card .qtype { position: absolute; top: 10px; left: 64px; font-size: 0.65rem; background: var(--border); border-radius: 4px; padding: 1px 6px; color: var(--fg); }
+  .detail-btn {
+    position: absolute; top: 8px; right: 10px; margin: 0;
+    padding: 4px 10px; font-size: 0.75rem; background: transparent;
+    color: var(--muted); border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
   }
-  button:disabled { opacity: 0.5; cursor: not-allowed; }
-  #showAnswerBtn { background: var(--accent); margin-top: 12px; width: 100%; }
-  .grade-buttons { display: flex; gap: 8px; margin-top: 14px; }
-  .grade-buttons button { flex: 1; }
-  .btn-good { background: var(--good); }
-  .btn-uncertain { background: var(--uncertain); }
-  .btn-bad { background: var(--bad); }
+  .card .question { font-size: 1.25rem; font-weight: bold; }
+  .card .answer-main { font-size: 1.2rem; font-weight: bold; }
+  .card .supplement { font-size: 0.92rem; margin-top: 12px; text-align: left; width: 100%; color: var(--fg); }
+  .card .supplement ul { margin: 4px 0 0; padding-left: 1.2em; }
+  .card .flip-hint { position: absolute; bottom: 10px; font-size: 0.72rem; color: var(--muted); }
+
+  /* 詳細パネル */
+  .detail-panel {
+    border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-top: 10px;
+    font-size: 0.82rem; color: var(--fg); background: var(--bg);
+  }
+  .detail-panel dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; }
+  .detail-panel dt { color: var(--muted); }
+  .detail-panel dd { margin: 0; word-break: break-word; }
+
+  /* 判定ボタン */
+  .grade-buttons { display: flex; gap: 10px; margin-top: 16px; }
+  .grade-buttons button { flex: 1; padding: 14px 12px; border: none; border-radius: 10px; color: #fff; font-size: 1.05rem; font-weight: bold; cursor: pointer; }
+  .grade-buttons button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-rikai { background: var(--rikai); }
+  .btn-next { background: var(--next); }
+  .btn-note { font-size: 0.72rem; color: var(--muted); text-align: center; margin-top: 8px; }
+
   details.apibox { margin-bottom: 12px; }
   #apiUrl { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font-size: 0.8rem; margin-top: 4px; }
-  details.apibox button { margin-top: 8px; background: var(--accent); }
+  details.apibox button { margin-top: 8px; background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -72,21 +94,31 @@
   <div class="status" id="status"></div>
   <div class="progress" id="progress"></div>
 
-  <div class="card" id="cardArea" hidden>
-    <span class="qtype" id="qtype"></span>
-    <div class="question" id="question"></div>
-    <button type="button" id="showAnswerBtn">答えを見る</button>
+  <div id="cardArea" hidden>
+    <div class="card" id="card">
+      <span class="face-label" id="faceLabel">問題</span>
+      <span class="qtype" id="qtype"></span>
+      <button type="button" class="detail-btn" id="detailBtn">詳細</button>
 
-    <div class="answer" id="answerArea" hidden>
-      <h3>正解</h3>
-      <div id="answer"></div>
-      <div class="supplement" id="supplement"></div>
-      <div class="grade-buttons">
-        <button type="button" class="btn-good" data-result="correct">できた</button>
-        <button type="button" class="btn-uncertain" data-result="uncertain">あやしい</button>
-        <button type="button" class="btn-bad" data-result="incorrect">できなかった</button>
+      <div id="frontFace">
+        <div class="question" id="question"></div>
       </div>
+
+      <div id="backFace" hidden>
+        <div class="answer-main" id="answer"></div>
+        <div class="supplement" id="supplement"></div>
+      </div>
+
+      <div class="flip-hint" id="flipHint">タップで答えを見る</div>
     </div>
+
+    <div class="detail-panel" id="detailPanel" hidden></div>
+
+    <div class="grade-buttons">
+      <button type="button" class="btn-rikai" id="rikaiBtn" data-result="mastered">リリカイ!</button>
+      <button type="button" class="btn-next" id="nextBtn" data-result="again">次のカードへ</button>
+    </div>
+    <div class="btn-note">「リリカイ!」＝理解できた（もう出しません）／「次のカードへ」＝また出す（翌日）</div>
   </div>
 
   <div id="doneArea" hidden>
@@ -100,6 +132,7 @@
   let queue = [];
   let index = 0;
   let currentReviewId = null;
+  let flipped = false;
   let submitting = false;
 
   function setStatus(message, type = "") {
@@ -110,8 +143,6 @@
   function newReviewId() {
     return "review_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
   }
-
-  const RESULT_LABEL = { correct: "できた", uncertain: "あやしい", incorrect: "できなかった" };
 
   async function loadDue() {
     setStatus("今日の復習カードを読み込み中です...", "");
@@ -127,7 +158,7 @@
         $("doneMsg").textContent = "今日の復習はありません。お疲れさまでした。";
         return;
       }
-      setStatus(`${queue.length}枚の復習があります。`, "");
+      setStatus("", "");
       showCard();
     } catch (error) {
       setStatus(error.message || "読み込みに失敗しました。", "error");
@@ -140,11 +171,12 @@
       $("doneArea").hidden = false;
       $("progress").textContent = "";
       setStatus("", "");
-      $("doneMsg").textContent = `復習完了！ ${queue.length}枚を記録しました。次回復習日が更新されました。`;
+      $("doneMsg").textContent = `復習完了！ ${queue.length}枚を確認しました。「リリカイ!」したカードは今後の復習に出ません。`;
       return;
     }
     const card = queue[index];
     currentReviewId = newReviewId();
+    flipped = false;
     $("progress").textContent = `${index + 1} / ${queue.length}`;
     $("qtype").textContent = card.cardType || "";
     $("question").textContent = card.question || "";
@@ -152,17 +184,47 @@
     const sup = (card.supplement || []);
     $("supplement").innerHTML = sup.length
       ? "<ul>" + sup.map((s) => `<li>${escapeHtml(s)}</li>`).join("") + "</ul>" : "";
-    $("answerArea").hidden = true;
+    renderDetail(card);
+    // 表面から開始
+    $("frontFace").hidden = false;
+    $("backFace").hidden = true;
+    $("faceLabel").textContent = "問題";
+    $("flipHint").textContent = "タップで答えを見る";
+    $("detailPanel").hidden = true;
     $("cardArea").hidden = false;
     $("doneArea").hidden = true;
+  }
+
+  function flipCard() {
+    flipped = !flipped;
+    $("frontFace").hidden = flipped;
+    $("backFace").hidden = !flipped;
+    $("faceLabel").textContent = flipped ? "答え" : "問題";
+    $("flipHint").textContent = flipped ? "タップで問題に戻る" : "タップで答えを見る";
+  }
+
+  function renderDetail(card) {
+    const r = card.review || {};
+    const rows = [
+      ["分野", card.subject || "(なし)"],
+      ["資格・コース", card.qualification || "(なし)"],
+      ["カード種別", card.cardType || "(なし)"],
+      ["conceptKey", card.conceptKey || "(なし)"],
+      ["復習回数", String(r.reviewCount || 0)],
+      ["習熟度", String(r.masteryLevel || 0) + " / 5"],
+      ["次回復習日", r.nextReviewDate || "(未設定)"],
+      ["出典セッション数", String((card.sourceSessionIds || []).length)]
+    ];
+    $("detailPanel").innerHTML = "<dl>" +
+      rows.map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd>`).join("") + "</dl>";
   }
 
   async function grade(result) {
     if (submitting) return;
     const card = queue[index];
     submitting = true;
-    setGradeDisabled(true);
-    setStatus(`「${RESULT_LABEL[result]}」を記録中です...`, "");
+    setButtonsDisabled(true);
+    setStatus("記録中です...", "");
     try {
       await callApi({ action: "reviewCard", cardId: card.cardId, result, reviewId: currentReviewId });
       index++;
@@ -172,18 +234,26 @@
       setStatus(error.message || "記録に失敗しました。もう一度お試しください。", "error");
     } finally {
       submitting = false;
-      setGradeDisabled(false);
+      setButtonsDisabled(false);
     }
   }
 
-  function setGradeDisabled(disabled) {
-    document.querySelectorAll(".grade-buttons button").forEach((b) => { b.disabled = disabled; });
+  function setButtonsDisabled(disabled) {
+    $("rikaiBtn").disabled = disabled;
+    $("nextBtn").disabled = disabled;
   }
 
-  $("showAnswerBtn").addEventListener("click", () => { $("answerArea").hidden = false; });
-  document.querySelectorAll(".grade-buttons button").forEach((btn) => {
-    btn.addEventListener("click", () => grade(btn.dataset.result));
+  // カードのタップでめくる（詳細ボタンのタップはめくらない）。
+  $("card").addEventListener("click", (event) => {
+    if (event.target.closest("#detailBtn")) return;
+    flipCard();
   });
+  $("detailBtn").addEventListener("click", (event) => {
+    event.stopPropagation();
+    $("detailPanel").hidden = !$("detailPanel").hidden;
+  });
+  $("rikaiBtn").addEventListener("click", () => grade("mastered"));
+  $("nextBtn").addEventListener("click", () => grade("again"));
   $("saveApiUrlBtn").addEventListener("click", () => {
     setApiUrl($("apiUrl").value);
     setStatus("API URLを保存しました。再読み込みします。", "");

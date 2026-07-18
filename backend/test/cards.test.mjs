@@ -245,3 +245,35 @@ test("applyReview: reviewが未定義でも初期値から動く", () => {
   assert.equal(review.uncertainCount, 1);
   assert.equal(review.nextReviewDate, "2026-07-21");
 });
+
+test("isReviewResult: 新2択（mastered/again）も妥当", () => {
+  assert.equal(isReviewResult("mastered"), true);
+  assert.equal(isReviewResult("again"), true);
+});
+
+test("computeNextReviewDate: again=翌日 / mastered=遠い将来", () => {
+  assert.equal(computeNextReviewDate("again", "2026-07-18T00:00:00.000Z"), "2026-07-19");
+  // mastered は retire 用に遠い将来（+3650日 ≒ 10年）
+  const mastered = computeNextReviewDate("mastered", "2026-07-18T00:00:00.000Z");
+  assert.ok(mastered > "2036-07", "mastered should be far in the future: " + mastered);
+});
+
+test("applyReview: mastered→mastered:true・masteryLevel:5・masteredCount++", () => {
+  const card = { review: { nextReviewDate: "2026-07-18", reviewCount: 2, masteryLevel: 1 } };
+  const { review } = applyReview(card, "mastered", "2026-07-18T00:00:00.000Z");
+  assert.equal(review.mastered, true);
+  assert.equal(review.masteryLevel, 5);
+  assert.equal(review.masteredCount, 1);
+  assert.equal(review.reviewCount, 3);
+});
+
+test("applyReview: again→翌日再スケジュール・againCount++・masteryLevel据え置き・mastered維持false", () => {
+  const card = { review: { nextReviewDate: "2026-07-18", reviewCount: 1, masteryLevel: 2, mastered: false } };
+  const { review, newNextReviewDate } = applyReview(card, "again", "2026-07-18T00:00:00.000Z");
+  assert.equal(newNextReviewDate, "2026-07-19");
+  assert.equal(review.nextReviewDate, "2026-07-19");
+  assert.equal(review.againCount, 1);
+  assert.equal(review.masteryLevel, 2);
+  assert.equal(review.mastered, false);
+  assert.equal(review.reviewCount, 2);
+});

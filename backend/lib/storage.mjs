@@ -32,6 +32,12 @@ export async function getSessionMarkdownUrl(key) {
   );
 }
 
+// Markdown本文をS3から文字列で取得する（後付け写真添付時の front matter 更新に使う）。
+export async function getSessionMarkdownContent(key) {
+  const res = await s3Client.send(new GetObjectCommand({ Bucket: DATA_BUCKET, Key: key }));
+  return res.Body.transformToString("utf-8");
+}
+
 // ノート写真アップロード用の署名付きPUT URLを発行する（§8.2）。
 // 未対応の contentType なら null を返す（呼び出し側で400）。
 export async function createNoteUploadUrl(userId, contentType) {

@@ -84,7 +84,10 @@ export function buildCardItem({
       correctCount: 0,
       uncertainCount: 0,
       incorrectCount: 0,
-      masteryLevel: 0
+      masteryLevel: 0,
+      mastered: false,
+      againCount: 0,
+      masteredCount: 0
     }
   };
 }
@@ -248,16 +251,26 @@ export function mergeCardData(target, source, now = new Date().toISOString()) {
 
 // --- Phase 6: 復習 ---
 
-export const REVIEW_RESULTS = new Set(["correct", "uncertain", "incorrect"]);
+// 現行UIの2択（mastered=リリカイ! / again=次のカードへ）に加え、
+// 旧3段階（correct/uncertain/incorrect）も後方互換で受け付ける。
+export const REVIEW_RESULTS = new Set(["mastered", "again", "correct", "uncertain", "incorrect"]);
+
+// リリカイ!（理解完了）で復習から外すため、実質「出さない」遠い将来日を使う。
+const MASTERED_OFFSET_DAYS = 3650;
 
 export function isReviewResult(value) {
   return REVIEW_RESULTS.has(String(value || ""));
 }
 
-// 評価から次回復習日を計算する（§16.2）。ルール変更に備え独立関数にしている。
-// できた(correct)=+7日 / あやしい(uncertain)=+3日 / できなかった(incorrect)=翌日。
+// 評価から次回復習日を計算する（§16.2 は独立関数にして後から変更しやすくしている）。
+// mastered(リリカイ!)=遠い将来（retire）/ again(次のカードへ)=翌日 /
+// 旧: できた=+7 / あやしい=+3 / できなかった=翌日。
 export function computeNextReviewDate(result, nowIso = new Date().toISOString()) {
-  const offset = result === "correct" ? 7 : result === "uncertain" ? 3 : 1;
+  const offset =
+    result === "mastered" ? MASTERED_OFFSET_DAYS :
+    result === "correct" ? 7 :
+    result === "uncertain" ? 3 :
+    1; // again / incorrect / 未知
   return jstDateWithOffset(nowIso, offset);
 }
 
@@ -268,11 +281,11 @@ export function applyReview(card, result, nowIso = new Date().toISOString()) {
   const newNextReviewDate = computeNextReviewDate(result, nowIso);
 
   const num = (v) => Number(v || 0);
-  const masteryLevel = result === "correct"
-    ? Math.min(num(prev.masteryLevel) + 1, 5)
-    : result === "incorrect"
-      ? 0
-      : num(prev.masteryLevel);
+  const masteryLevel =
+    result === "mastered" ? 5 :
+    result === "correct" ? Math.min(num(prev.masteryLevel) + 1, 5) :
+    result === "incorrect" ? 0 :
+    num(prev.masteryLevel); // again / uncertain は据え置き
 
   const review = {
     lastReviewedAt: nowIso,
@@ -281,7 +294,10 @@ export function applyReview(card, result, nowIso = new Date().toISOString()) {
     correctCount: num(prev.correctCount) + (result === "correct" ? 1 : 0),
     uncertainCount: num(prev.uncertainCount) + (result === "uncertain" ? 1 : 0),
     incorrectCount: num(prev.incorrectCount) + (result === "incorrect" ? 1 : 0),
-    masteryLevel
+    againCount: num(prev.againCount) + (result === "again" ? 1 : 0),
+    masteredCount: num(prev.masteredCount) + (result === "mastered" ? 1 : 0),
+    masteryLevel,
+    mastered: result === "mastered" ? true : Boolean(prev.mastered)
   };
 
   return { review, previousNextReviewDate, newNextReviewDate };

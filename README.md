@@ -2,7 +2,7 @@
 
 学習者が自分の言葉で説明し、その説明をAIが分析する学習支援サービス。詳細は `SPEC.md` を参照。
 
-このREADMEはPhase 7（ノート写真・仕上げ・カレンダー集計表示）まで完了時点の内容。これで SPEC §21「必須」機能は一通り実装済み。
+このREADMEはPhase 8（復習フラッシュカード化・ノートに書き写す内容のAI生成・結果後のノート写真保存）まで完了時点の内容。SPEC §21「必須」機能は一通り実装済み。
 
 ## 画面構成
 
@@ -17,7 +17,7 @@
 
 ## APIアクション
 
-`createSession` / `processSessionJob`(内部) / `getSession` / `listSessions` / `getSessionMarkdown` / `adoptCards` / `listCards` / `getCard` / `updateCard` / `checkDuplicates` / `mergeAnswerIntoCard` / `resolveConflict` / `mergeCardsManual` / `listDueCards` / `reviewCard` / `getNoteUploadUrl` / `getNoteImageUrls` / `health`
+`createSession` / `processSessionJob`(内部) / `getSession` / `listSessions` / `getSessionMarkdown` / `adoptCards` / `listCards` / `getCard` / `updateCard` / `checkDuplicates` / `mergeAnswerIntoCard` / `resolveConflict` / `mergeCardsManual` / `listDueCards` / `reviewCard` / `getNoteUploadUrl` / `getNoteImageUrls` / `attachNoteImages` / `health`
 
 ## 構成
 
@@ -132,23 +132,32 @@ Front Matter（YAML）＋ 本文（今日の目的／自分で分からなかっ
 - needs_review は `cards.html` で利用者が確定（`resolveConflict`）。過去のMarkdownは書き換えない
 - 手動統合（`mergeCardsManual`→`mergeCardData`）：source を target に吸収（sourceSessionIds/supplement をunion、review集計を合算）、source は `status=merged`・`mergedIntoCardId` を保持（§15）
 
-## 復習日計算ルール（Phase 6・§16）
+## 復習フロー（Phase 8でフラッシュカード化・§16）
 
-- 評価は3段階（できた=`correct` / あやしい=`uncertain` / できなかった=`incorrect`）
-- 次回復習日（`computeNextReviewDate`、独立した純関数で後から変更しやすい）：できた=+7日 / あやしい=+3日 / できなかった=翌日。新規カードは採用時に翌日で初期化（§16.2）
-- `listDueCards` が `nextReviewDate <= 今日(JST)` の有効カードを返し、`review.html` が1枚ずつ提示。評価は `reviewCard` で記録し `applyReview` が review 集計と次回日を更新
-- **復習履歴**：`SK=REVIEW#{reviewId}` に1件ずつ保存（result・reviewedAt・previousNextReviewDate・newNextReviewDate、§16.4）。カード本体の `review` カウントにも反映
-- **冪等性**：フロントがカード提示ごとに `reviewId` を発行。バックエンドは履歴を条件付きPut（`putNewItem`）し、二重送信時は加算せず `duplicate:true` を返す（§23.6）
+- `review.html` は1枚ずつのフラッシュカード。**カードをタップすると質問↔答え（＋補足）がめくれる**。右上「詳細」ボタンで分野/資格・カード種別・conceptKey・復習回数・習熟度・次回復習日・出典セッション数を表示。
+- 下部は2ボタン：
+  - **「リリカイ!」**（`result:"mastered"`）＝理解完了 → `review.mastered=true`・`masteryLevel=5` にして**以後の復習に出さない**（retire）。`computeNextReviewDate` は遠い将来日を返すが、実際の除外は `listDueCards` / カレンダー集計の `!review.mastered` フィルタで行う。
+  - **「次のカードへ」**（`result:"again"`）＝まだ理解しきっていない → `nextReviewDate=翌日` にして**翌日また出す**。`againCount`・`reviewCount` を加算。
+- `computeNextReviewDate` は独立した純関数（後から間隔を変えやすい）。旧3段階（できた=+7 / あやしい=+3 / できなかった=翌日）も後方互換で残しているが、既定UIは上記2択。新規カードは採用時に翌日で初期化（§16.2）。
+- `listDueCards` は `status=active` かつ `!review.mastered` かつ `nextReviewDate <= 今日(JST)` を返す。
+- **復習履歴**：`SK=REVIEW#{reviewId}` に1件ずつ保存（result・reviewedAt・previousNextReviewDate・newNextReviewDate、§16.4）。カード本体の `review` カウントにも反映。
+- **冪等性**：フロントがカード提示ごとに `reviewId` を発行。バックエンドは履歴を条件付きPut（`putNewItem`）し、二重送信時は加算せず `duplicate:true` を返す（§23.6）。
 
 ## ノート写真（Phase 7・§8）
 
 後から学習内容を見返すための参照資料。OCR・手書き認識・AI分析・自動カード化はしない（§8.1）。
 
-- **アップロード**：ブラウザ→S3の直PUT（Presigned URL、§8.2）。Lambdaは画像本体を中継しない。`session.html` で写真を選ぶと即アップロードし、成功したキーだけを保存時に `createSession` の `noteImages[]` へ渡す。**アップロードはセッション作成の前**に行うので、写真の失敗はセッション本文の消失につながらない（失敗分は付かないだけ、§23.7）。対応形式は jpeg/png/webp/gif、1枚8MBまで、最大10枚。失敗した写真は再試行できる（§8.4）。
+- **アップロード**：ブラウザ→S3の直PUT（Presigned URL、§8.2）。Lambdaは画像本体を中継しない。対応形式は jpeg/png/webp/gif、1枚8MBまで、最大10枚。失敗した写真は再試行できる（§8.4）。写真アップロード欄は2箇所（両方とも同一セッションの `noteImages` に入る）：
+  - **フォーム内（事前・任意）**：保存時に `createSession.noteImages[]` へ。作成前なので写真失敗がセッション本文の消失につながらない（§23.7）。
+  - **AI結果表示の後（主導線・Phase 8）**：実際の流れは「保存→AI結果→`noteText` を見てノートに書き写す→写メ」。結果画面の「書き写したノートを保存」からアップロードすると、成功ごとに `attachNoteImages`（`sessionSk`, キー）で**作成済みセッションへ追記**する。Markdown（正本）の front matter `noteImages:` も `replaceNoteImagesInFrontMatter` で更新する（本文は書き換えない＝DynamoDBに生文字起こしを持たない設計・§3.2/§26のため全再生成はしない）。
 - **キー設計（§8.3）**：`notes/users/{userId}/{yyyy}/{mm}/{dd}/note_{imageId}.{ext}`。`imageId`・`ext`・日付はサーバ生成（`getNoteUploadUrl`）。`userId` はサーバ固定で、`createSession` はクライアント指定の `noteImages` を `notes/users/{固定userId}/` 接頭辞のものだけ受理する（§28.3/§23.8）。
 - **表示**：`getNoteImageUrls`（`sessionSk`）が各キーに閲覧用の署名付きGET URLを付けて返し、`calendar.html` のセッション詳細でサムネイル表示（タップで別タブに原寸）。
 - **Markdown**：`processSessionJob` が `session.noteImages` を Front Matter の `noteImages:` に記録する（§4.2/§23.2）。既存Markdownはカード更新で書き換えない方針のまま（§26）。
 - **CORS**：ブラウザ直PUTのため、データバケットに `aws_s3_bucket_cors_configuration`（PUT/GET/HEAD、初期版は全オリジン許可）を設定。IAMは既存の `s3:GetObject`/`s3:PutObject`（`${data.arn}/*`）で足りる。
+
+## ノートに書き写す内容（Phase 8）
+
+AI分析（`callOpenAIForAnalysis`）が、紙のノートにそのまま書き写せる短い箇条書き `noteText`（5〜10個・要点/定義/違い/条件/数値など・文字ベース）を生成する。セッション詳細（`session.html` の結果／`calendar.html`）に表示し、Markdown 本文に `## ノートに書き写す内容` として保存する。利用者はこれを見て手でノートに書き写し、その写真を「書き写したノートを保存」から `attachNoteImages` でセッションに残す。OCR等はせず、書き写す“お題”をAIが提示するだけ。
 
 ## 将来Apple Speechを接続する場所
 

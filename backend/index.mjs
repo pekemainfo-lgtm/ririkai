@@ -15,7 +15,8 @@ import {
   isReviewResult,
   applyReview
 } from "./lib/cards.mjs";
-import { sessionMarkdownKey, putSessionMarkdown, getSessionMarkdownUrl, createNoteUploadUrl, getNoteImageViewUrl, DATA_BUCKET } from "./lib/storage.mjs";
+import { sessionMarkdownKey, putSessionMarkdown, getSessionMarkdownUrl, getSessionMarkdownContent, createNoteUploadUrl, getNoteImageViewUrl, DATA_BUCKET } from "./lib/storage.mjs";
+import { replaceNoteImagesInFrontMatter } from "./lib/markdown.mjs";
 import { isOwnedNoteKey } from "./lib/keys.mjs";
 
 const REGION = "ap-northeast-1";
@@ -135,6 +136,7 @@ async function createSession(body) {
     misconceptions: [],
     confirmQuestions: [],
     reviewItems: [],
+    noteText: [],
     purposeJudgement: null,
     generateCards,
     cardStatus: generateCards ? "pending" : "skipped",
@@ -263,7 +265,8 @@ async function processSessionJob(body) {
       ambiguousPoints: analysis.ambiguousPoints,
       misconceptions: analysis.misconceptions,
       confirmQuestions: analysis.confirmQuestions,
-      reviewItems: analysis.reviewItems
+      reviewItems: analysis.reviewItems,
+      noteText: analysis.noteText
     });
 
     await putSessionMarkdown(markdownKey, markdown);
@@ -279,6 +282,7 @@ async function processSessionJob(body) {
       misconceptions: analysis.misconceptions,
       confirmQuestions: analysis.confirmQuestions,
       reviewItems: analysis.reviewItems,
+      noteText: analysis.noteText,
       purposeJudgement: analysis.purposeJudgement,
       updatedAt: new Date().toISOString()
     };
@@ -578,7 +582,7 @@ async function listDueCards(body) {
   const items = await queryByPrefix("CARD#", { limit: 500, scanIndexForward: false });
 
   const due = items
-    .filter((c) => c.status === "active" && c.review?.nextReviewDate && c.review.nextReviewDate <= today)
+    .filter((c) => c.status === "active" && !c.review?.mastered && c.review?.nextReviewDate && c.review.nextReviewDate <= today)
     .sort((a, b) => String(a.review.nextReviewDate).localeCompare(String(b.review.nextReviewDate)));
 
   return jsonResponse(200, { status: "ok", today, cards: due });
@@ -759,6 +763,47 @@ async function getNoteImageUrls(body) {
   return jsonResponse(200, { status: "ok", images });
 }
 
+// 既存セッションに後からノート写真を添付する（AI結果を見て書き写した後の保存口）。
+// body: { sessionSk, noteImages[] }
+async function attachNoteImages(body) {
+  const sessionSk = String(body.sessionSk || "").trim();
+  if (!sessionSk) {
+    return jsonResponse(400, { status: "error", errorCode: "NO_SESSION_SK", message: "sessionSk is required" });
+  }
+
+  const session = await getItem(sessionSk);
+  if (!session) {
+    return jsonResponse(404, { status: "error", errorCode: "SESSION_NOT_FOUND", message: "session not found" });
+  }
+
+  const incoming = (Array.isArray(body.noteImages) ? body.noteImages : [])
+    .filter((key) => isOwnedNoteKey(USER_ID, key));
+
+  // 既存 + 追加を重複除去し、合計最大10枚（§8.4）。
+  const merged = [];
+  for (const key of [...(session.noteImages || []), ...incoming]) {
+    if (!merged.includes(key)) merged.push(key);
+    if (merged.length >= 10) break;
+  }
+
+  await putItem({ ...session, noteImages: merged, updatedAt: new Date().toISOString() });
+
+  // Markdown（正本）の front matter の写真参照も更新する（best-effort）。本文は書き換えない。
+  if (session.markdownS3Key) {
+    try {
+      const markdown = await getSessionMarkdownContent(session.markdownS3Key);
+      const updated = replaceNoteImagesInFrontMatter(markdown, merged);
+      if (updated !== markdown) {
+        await putSessionMarkdown(session.markdownS3Key, updated);
+      }
+    } catch (error) {
+      console.error("update markdown noteImages failed:", session.markdownS3Key, error);
+    }
+  }
+
+  return jsonResponse(200, { status: "ok", noteImages: merged });
+}
+
 export const handler = async (event) => {
   try {
     if (event?.requestContext?.http?.method === "OPTIONS") {
@@ -842,6 +887,10 @@ export const handler = async (event) => {
 
     if (action === "getNoteImageUrls") {
       return await getNoteImageUrls(body);
+    }
+
+    if (action === "attachNoteImages") {
+      return await attachNoteImages(body);
     }
 
     return jsonResponse(400, {

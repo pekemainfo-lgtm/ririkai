@@ -184,6 +184,17 @@
     <h2>復習事項</h2>
     <ul id="reviewItems"></ul>
 
+    <h2>✍️ ノートに書き写す内容</h2>
+    <p class="hint">この内容を紙のノートに書き写し、下の「書き写したノートを保存」で写真を撮って残せます。</p>
+    <ul id="noteText"></ul>
+
+    <fieldset>
+      <legend>書き写したノートを保存（任意・最大10枚）</legend>
+      <p class="hint">ノートに書き写したら、その写真をここから保存します。このセッションに紐づきます。</p>
+      <input type="file" id="noteFilesAfter" accept="image/jpeg,image/png,image/webp,image/gif" multiple>
+      <div class="note-list" id="noteListAfter"></div>
+    </fieldset>
+
     <button type="button" id="viewMarkdownBtn">Markdownを表示</button>
 
     <div id="cardCandidatesArea" hidden>
@@ -207,121 +218,139 @@
   let currentCandidates = [];
   let pendingAdoption = null; // { selected, results }
 
-  // --- ノート写真アップロード ---
+  // --- ノート写真アップロード（フォーム内の事前添付・結果後の保存 の2箇所で共用） ---
   const MAX_NOTE_FILES = 10;
   const MAX_NOTE_BYTES = 8 * 1024 * 1024;
   const ALLOWED_NOTE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-  let noteUploads = []; // { id, file, name, previewUrl, state:'uploading'|'ok'|'error', s3Key, error }
 
-  function renderNoteList() {
-    const list = $("noteList");
-    list.innerHTML = "";
-    noteUploads.forEach((n) => {
-      const row = document.createElement("div");
-      row.className = "note-item";
+  // listElId のリストにサムネイル・状態・再試行/削除を描画し、選択で即アップロードするアップローダ。
+  // onUploaded(s3Key) を渡すと、各アップロード成功時に呼ぶ（結果後スロットで attachNoteImages に使う）。
+  function createUploader({ fileInputId, listElId, onUploaded }) {
+    let uploads = []; // { id, file, name, previewUrl, state, s3Key, error }
 
-      const img = document.createElement("img");
-      img.src = n.previewUrl;
-      img.alt = n.name;
-      row.appendChild(img);
+    function render() {
+      const list = $(listElId);
+      list.innerHTML = "";
+      uploads.forEach((n) => {
+        const row = document.createElement("div");
+        row.className = "note-item";
 
-      const meta = document.createElement("div");
-      meta.className = "note-meta";
-      const name = document.createElement("div");
-      name.className = "note-name";
-      name.textContent = n.name;
-      const state = document.createElement("div");
-      state.className = "note-state" + (n.state === "ok" ? " ok" : n.state === "error" ? " err" : "");
-      state.textContent = n.state === "uploading" ? "⏳ アップロード中..."
-        : n.state === "ok" ? "✓ 添付できました"
-        : "✗ " + (n.error || "失敗しました");
-      meta.appendChild(name);
-      meta.appendChild(state);
-      row.appendChild(meta);
+        const img = document.createElement("img");
+        img.src = n.previewUrl;
+        img.alt = n.name;
+        row.appendChild(img);
 
-      if (n.state === "error") {
-        const retry = document.createElement("button");
-        retry.type = "button";
-        retry.textContent = "再試行";
-        retry.addEventListener("click", () => uploadNote(n.id));
-        row.appendChild(retry);
-      }
+        const meta = document.createElement("div");
+        meta.className = "note-meta";
+        const name = document.createElement("div");
+        name.className = "note-name";
+        name.textContent = n.name;
+        const state = document.createElement("div");
+        state.className = "note-state" + (n.state === "ok" ? " ok" : n.state === "error" ? " err" : "");
+        state.textContent = n.state === "uploading" ? "⏳ アップロード中..."
+          : n.state === "ok" ? "✓ 保存できました"
+          : "✗ " + (n.error || "失敗しました");
+        meta.appendChild(name);
+        meta.appendChild(state);
+        row.appendChild(meta);
 
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "note-remove";
-      remove.textContent = "削除";
-      remove.addEventListener("click", () => removeNote(n.id));
-      row.appendChild(remove);
+        if (n.state === "error") {
+          const retry = document.createElement("button");
+          retry.type = "button";
+          retry.textContent = "再試行";
+          retry.addEventListener("click", () => upload(n.id));
+          row.appendChild(retry);
+        }
 
-      list.appendChild(row);
-    });
-  }
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "note-remove";
+        remove.textContent = "削除";
+        remove.addEventListener("click", () => removeOne(n.id));
+        row.appendChild(remove);
 
-  function removeNote(id) {
-    const n = noteUploads.find((x) => x.id === id);
-    if (n && n.previewUrl) URL.revokeObjectURL(n.previewUrl);
-    noteUploads = noteUploads.filter((x) => x.id !== id);
-    renderNoteList();
-  }
-
-  async function uploadNote(id) {
-    const n = noteUploads.find((x) => x.id === id);
-    if (!n) return;
-    n.state = "uploading";
-    n.error = null;
-    renderNoteList();
-    try {
-      const res = await callApi({ action: "getNoteUploadUrl", contentType: n.file.type });
-      if (!res.uploadUrl || !res.s3Key) throw new Error(res.message || "アップロードURLの取得に失敗しました。");
-      const put = await fetch(res.uploadUrl, {
-        method: "PUT",
-        headers: { "Content-Type": n.file.type },
-        body: n.file
+        list.appendChild(row);
       });
-      if (!put.ok) throw new Error("S3へのアップロードに失敗しました（" + put.status + "）。");
-      n.s3Key = res.s3Key;
-      n.state = "ok";
-    } catch (error) {
-      n.state = "error";
-      n.error = error.message || "アップロードに失敗しました。";
     }
-    renderNoteList();
-  }
 
-  function addNoteFiles(files) {
-    for (const file of files) {
-      const remaining = MAX_NOTE_FILES - noteUploads.length;
-      if (remaining <= 0) {
-        setStatus(`ノート写真は最大${MAX_NOTE_FILES}枚までです。`, "error");
-        break;
-      }
-      if (!ALLOWED_NOTE_TYPES.includes(file.type)) {
-        setStatus(`「${file.name}」は対応していない形式です（jpeg/png/webp/gifのみ）。`, "error");
-        continue;
-      }
-      if (file.size > MAX_NOTE_BYTES) {
-        setStatus(`「${file.name}」は8MBを超えています。`, "error");
-        continue;
-      }
-      const id = "note_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-      const entry = { id, file, name: file.name, previewUrl: URL.createObjectURL(file), state: "uploading", s3Key: null, error: null };
-      noteUploads.push(entry);
-      renderNoteList();
-      uploadNote(id);
+    function removeOne(id) {
+      const n = uploads.find((x) => x.id === id);
+      if (n && n.previewUrl) URL.revokeObjectURL(n.previewUrl);
+      uploads = uploads.filter((x) => x.id !== id);
+      render();
     }
+
+    async function upload(id) {
+      const n = uploads.find((x) => x.id === id);
+      if (!n) return;
+      n.state = "uploading";
+      n.error = null;
+      render();
+      try {
+        const res = await callApi({ action: "getNoteUploadUrl", contentType: n.file.type });
+        if (!res.uploadUrl || !res.s3Key) throw new Error(res.message || "アップロードURLの取得に失敗しました。");
+        const put = await fetch(res.uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": n.file.type },
+          body: n.file
+        });
+        if (!put.ok) throw new Error("S3へのアップロードに失敗しました（" + put.status + "）。");
+        n.s3Key = res.s3Key;
+        if (onUploaded) await onUploaded(res.s3Key);
+        n.state = "ok";
+      } catch (error) {
+        n.state = "error";
+        n.error = error.message || "アップロードに失敗しました。";
+      }
+      render();
+    }
+
+    function addFiles(files) {
+      for (const file of files) {
+        if (uploads.length >= MAX_NOTE_FILES) {
+          setStatus(`ノート写真は最大${MAX_NOTE_FILES}枚までです。`, "error");
+          break;
+        }
+        if (!ALLOWED_NOTE_TYPES.includes(file.type)) {
+          setStatus(`「${file.name}」は対応していない形式です（jpeg/png/webp/gifのみ）。`, "error");
+          continue;
+        }
+        if (file.size > MAX_NOTE_BYTES) {
+          setStatus(`「${file.name}」は8MBを超えています。`, "error");
+          continue;
+        }
+        const id = "note_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        uploads.push({ id, file, name: file.name, previewUrl: URL.createObjectURL(file), state: "uploading", s3Key: null, error: null });
+        render();
+        upload(id);
+      }
+    }
+
+    return {
+      addFiles,
+      uploadedKeys: () => uploads.filter((n) => n.state === "ok" && n.s3Key).map((n) => n.s3Key),
+      hasUploading: () => uploads.some((n) => n.state === "uploading"),
+      hasFailed: () => uploads.some((n) => n.state === "error"),
+      reset: () => {
+        uploads.forEach((n) => { if (n.previewUrl) URL.revokeObjectURL(n.previewUrl); });
+        uploads = [];
+        $(fileInputId).value = "";
+        render();
+      }
+    };
   }
 
-  function uploadedNoteKeys() {
-    return noteUploads.filter((n) => n.state === "ok" && n.s3Key).map((n) => n.s3Key);
-  }
-
-  function resetNoteUploads() {
-    noteUploads.forEach((n) => { if (n.previewUrl) URL.revokeObjectURL(n.previewUrl); });
-    noteUploads = [];
-    $("noteFiles").value = "";
-    renderNoteList();
-  }
+  // フォーム内の事前添付（保存時に createSession.noteImages へ）。
+  const formUploader = createUploader({ fileInputId: "noteFiles", listElId: "noteList" });
+  // 結果表示後の保存（既存セッションへ attachNoteImages で追記）。
+  const afterUploader = createUploader({
+    fileInputId: "noteFilesAfter",
+    listElId: "noteListAfter",
+    onUploaded: async (s3Key) => {
+      if (!currentSessionSk) return;
+      await callApi({ action: "attachNoteImages", sessionSk: currentSessionSk, noteImages: [s3Key] });
+    }
+  });
 
   function todayJst() {
     const now = new Date();
@@ -355,6 +384,7 @@
     renderList("misconceptions", session.misconceptions);
     renderList("confirmQuestions", session.confirmQuestions);
     renderList("reviewItems", session.reviewItems);
+    renderList("noteText", session.noteText);
     currentSessionId = session.sessionId || null;
     currentCandidates = session.cardCandidates || [];
     renderCardCandidates(session);
@@ -628,7 +658,7 @@
       notUnderstoodNote: $("notUnderstoodNote").value.trim(),
       transcript: $("transcript").value.trim(),
       generateCards: $("generateCards").checked,
-      noteImages: uploadedNoteKeys()
+      noteImages: formUploader.uploadedKeys()
     };
 
     if (!payload.transcript) {
@@ -641,12 +671,10 @@
     }
 
     // アップロード中の写真があれば、その分は付かない旨を知らせるだけで保存は止めない（§23.7）。
-    const uploading = noteUploads.filter((n) => n.state === "uploading").length;
-    const failed = noteUploads.filter((n) => n.state === "error").length;
-    if (uploading > 0) {
-      setStatus(`写真${uploading}枚がまだアップロード中です。完了した${payload.noteImages.length}枚のみ添付して保存します。`, "");
-    } else if (failed > 0) {
-      setStatus(`写真${failed}枚が失敗しています。成功した${payload.noteImages.length}枚のみ添付して保存します。`, "");
+    if (formUploader.hasUploading()) {
+      setStatus(`写真がまだアップロード中です。完了した${payload.noteImages.length}枚のみ添付して保存します。`, "");
+    } else if (formUploader.hasFailed()) {
+      setStatus(`一部の写真が失敗しています。成功した${payload.noteImages.length}枚のみ添付して保存します。`, "");
     }
 
     isSaving = true;
@@ -668,7 +696,8 @@
       const session = await pollSession(start.sessionSk);
       setStatus("AI分析が完了しました。" + (attachedCount ? `ノート写真${attachedCount}枚を添付しました。` : ""), "ok");
       renderResult(session);
-      resetNoteUploads();
+      formUploader.reset();
+      afterUploader.reset();
     } catch (error) {
       setStatus(error.message || "エラーが発生しました。", "error");
     } finally {
@@ -693,8 +722,13 @@
 
   $("noteFiles").addEventListener("change", (event) => {
     const files = Array.from(event.target.files || []);
-    if (files.length) addNoteFiles(files);
+    if (files.length) formUploader.addFiles(files);
     // 同じファイルを選び直しても change が発火するようリセット。
+    event.target.value = "";
+  });
+  $("noteFilesAfter").addEventListener("change", (event) => {
+    const files = Array.from(event.target.files || []);
+    if (files.length) afterUploader.addFiles(files);
     event.target.value = "";
   });
 
