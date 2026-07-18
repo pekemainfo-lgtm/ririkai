@@ -1,5 +1,5 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand, GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, PutCommand, GetCommand, QueryCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 
 const REGION = "ap-northeast-1";
 export const TABLE_NAME = "ReRikaiTable";
@@ -19,6 +19,19 @@ export async function putNewItem(item) {
     TableName: TABLE_NAME,
     Item: item,
     ConditionExpression: "attribute_not_exists(PK)"
+  }));
+}
+
+// 復習の履歴保存とカード更新を単一トランザクションで行う（§6 原子性）。
+// 履歴は条件付きPut（同一reviewIdの再送で失敗＝冪等）。トランザクションなので
+// 「履歴だけ書けてカード未更新」「カードだけ更新して履歴なし」の不整合が起きない。
+// 重複時は TransactionCanceledException（CancellationReasons[].Code==="ConditionalCheckFailed"）を投げる。
+export async function putReviewHistoryAndCardTx(historyItem, cardItem) {
+  await docClient.send(new TransactWriteCommand({
+    TransactItems: [
+      { Put: { TableName: TABLE_NAME, Item: historyItem, ConditionExpression: "attribute_not_exists(PK)" } },
+      { Put: { TableName: TABLE_NAME, Item: cardItem } }
+    ]
   }));
 }
 

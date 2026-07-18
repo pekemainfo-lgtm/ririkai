@@ -1,5 +1,5 @@
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
-import { putItem, putNewItem, getItem, queryByPrefix, USER_ID } from "./lib/dynamo.mjs";
+import { putItem, getItem, queryByPrefix, putReviewHistoryAndCardTx, USER_ID } from "./lib/dynamo.mjs";
 import { toJstDate } from "./lib/dates.mjs";
 import { validateCreateSessionInput } from "./lib/validate.mjs";
 import { buildSessionMarkdown } from "./lib/markdown.mjs";
@@ -646,18 +646,20 @@ async function reviewCard(body) {
     newNextReviewDate
   };
 
-  // 履歴を条件付きPut。既に同じreviewIdがあれば二重送信なので加算しない。
+  const updatedCard = { ...card, review, updatedAt: now };
+
+  // 履歴の条件付きPutとカード更新を単一トランザクションで実行（§6）。
+  // 同一reviewIdの再送はトランザクションがキャンセルされ、二重加算しない（冪等）。
   try {
-    await putNewItem(historyItem);
+    await putReviewHistoryAndCardTx(historyItem, updatedCard);
   } catch (error) {
-    if (error?.name === "ConditionalCheckFailedException") {
+    const canceledDup = error?.name === "TransactionCanceledException"
+      && (error.CancellationReasons || []).some((r) => r?.Code === "ConditionalCheckFailed");
+    if (canceledDup || error?.name === "ConditionalCheckFailedException") {
       return jsonResponse(200, { status: "ok", duplicate: true, card });
     }
     throw error;
   }
-
-  const updatedCard = { ...card, review, updatedAt: now };
-  await putItem(updatedCard);
 
   return jsonResponse(200, { status: "ok", card: updatedCard, history: historyItem });
 }
