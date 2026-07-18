@@ -2,14 +2,14 @@
 
 学習者が自分の言葉で説明し、その説明をAIが分析する学習支援サービス。詳細は `SPEC.md` を参照。
 
-このREADMEはPhase 6（復習：今日の復習・3段階評価・次回復習日更新・復習履歴）まで完了時点の内容。
+このREADMEはPhase 7（ノート写真・仕上げ・カレンダー集計表示）まで完了時点の内容。これで SPEC §21「必須」機能は一通り実装済み。
 
 ## 画面構成
 
 | ページ | 役割 |
 |---|---|
-| `web/calendar.html` | 主要画面（CloudFrontのルート）。月間カレンダー → 日付詳細 → セッション詳細 → Markdown表示の3階層 |
-| `web/session.html` | 学習セッションの入力・保存・AI分析・カード候補の採用 |
+| `web/calendar.html` | 主要画面（CloudFrontのルート）。月間カレンダー → 日付詳細 → セッション詳細 → Markdown表示の3階層。日セルに新規カード数・復習予定数、上部に「今日の復習／要確認」件数、セッション詳細にノート写真を表示 |
+| `web/session.html` | 学習セッションの入力・保存・AI分析・カード候補の採用・ノート写真の添付 |
 | `web/cards.html` | カード一覧・詳細・手動編集・要確認解決・手動統合 |
 | `web/review.html` | 今日の復習（質問→正解→3段階評価） |
 
@@ -17,7 +17,7 @@
 
 ## APIアクション
 
-`createSession` / `processSessionJob`(内部) / `getSession` / `listSessions` / `getSessionMarkdown` / `adoptCards` / `listCards` / `getCard` / `updateCard` / `checkDuplicates` / `mergeAnswerIntoCard` / `resolveConflict` / `mergeCardsManual` / `listDueCards` / `reviewCard` / `health`
+`createSession` / `processSessionJob`(内部) / `getSession` / `listSessions` / `getSessionMarkdown` / `adoptCards` / `listCards` / `getCard` / `updateCard` / `checkDuplicates` / `mergeAnswerIntoCard` / `resolveConflict` / `mergeCardsManual` / `listDueCards` / `reviewCard` / `getNoteUploadUrl` / `getNoteImageUrls` / `health`
 
 ## 構成
 
@@ -36,7 +36,7 @@ SPEC.md     実装仕様書
 | リソース | 名前 | 用途 |
 |---|---|---|
 | DynamoDB | `ReRikaiTable` | セッション索引（PAY_PER_REQUEST、PK=`USER#{userId}`） |
-| S3 | `ririkai-data-naohiro` | Markdown（`sessions/users/{userId}/...`）。将来ノート写真も同バケット |
+| S3 | `ririkai-data-naohiro` | Markdown（`sessions/users/{userId}/...`）とノート写真（`notes/users/{userId}/...`）。ブラウザ直PUT用にCORSを設定 |
 | S3 | `ririkai-web-naohiro` | フロントエンド静的ファイル（CloudFront経由のみ公開） |
 | Lambda | `ReRikaiApi` | API本体 |
 | API Gateway | `ReRikai-API` | HTTP API |
@@ -105,7 +105,7 @@ Front Matter（YAML）＋ 本文（今日の目的／自分で分からなかっ
 
 ### DynamoDBセッションアイテム（索引）
 
-`SK=SESSION#{createdAt}`。生の文字起こしは含まない。分析結果（理解できている点・曖昧な点・誤解の可能性・確認質問・復習事項）と、MarkdownのS3キー、カード候補（`cardCandidates`）・採用済みカードID（`cardIds`）・`cardStatus`（pending/done/failed/skipped）を保持する。
+`SK=SESSION#{createdAt}`。生の文字起こしは含まない。分析結果（理解できている点・曖昧な点・誤解の可能性・確認質問・復習事項）と、MarkdownのS3キー、カード候補（`cardCandidates`）・採用済みカードID（`cardIds`）・`cardStatus`（pending/done/failed/skipped）・ノート写真キー（`noteImages`、§8）を保持する。
 
 ### DynamoDBカードアイテム（§12）
 
@@ -122,7 +122,7 @@ Front Matter（YAML）＋ 本文（今日の目的／自分で分からなかっ
 
 ## カレンダーの集計（Phase 3）
 
-`listSessions`（`yearMonth`指定）が当月のSESSIONアイテムを返し、日別の集計（セッション数・合計学習時間・分野/資格）は `web/calendar-core.mjs` の `aggregateByDate` がクライアント側で行う。新規カード数・復習予定数・要確認数はカード/復習機能（Phase 4〜6）実装後に差し込む予定で、現状はプレースホルダ。
+`listSessions`（`yearMonth`指定）が当月のSESSIONアイテムを返し、日別の集計（セッション数・合計学習時間・分野/資格）は `web/calendar-core.mjs` の `aggregateByDate` がクライアント側で行う。加えて `listCards` の結果を `aggregateCardsByDate(cards, today)` で集計し、各日セルに「新規カード数（採用日 = `createdAt` の JST 日付）」「復習予定数（その日が `review.nextReviewDate`）」を、カレンダー上部に「今日の復習件数（`nextReviewDate <= 今日` の active）」「要確認件数（`status=needs_review`）」を表示する（Phase 7）。集計はすべてクライアント側の純関数で、`node --test` 済み。
 
 ## 重複判定・統合の考え方（Phase 5・§10/§11/§15）
 
@@ -140,13 +140,23 @@ Front Matter（YAML）＋ 本文（今日の目的／自分で分からなかっ
 - **復習履歴**：`SK=REVIEW#{reviewId}` に1件ずつ保存（result・reviewedAt・previousNextReviewDate・newNextReviewDate、§16.4）。カード本体の `review` カウントにも反映
 - **冪等性**：フロントがカード提示ごとに `reviewId` を発行。バックエンドは履歴を条件付きPut（`putNewItem`）し、二重送信時は加算せず `duplicate:true` を返す（§23.6）
 
+## ノート写真（Phase 7・§8）
+
+後から学習内容を見返すための参照資料。OCR・手書き認識・AI分析・自動カード化はしない（§8.1）。
+
+- **アップロード**：ブラウザ→S3の直PUT（Presigned URL、§8.2）。Lambdaは画像本体を中継しない。`session.html` で写真を選ぶと即アップロードし、成功したキーだけを保存時に `createSession` の `noteImages[]` へ渡す。**アップロードはセッション作成の前**に行うので、写真の失敗はセッション本文の消失につながらない（失敗分は付かないだけ、§23.7）。対応形式は jpeg/png/webp/gif、1枚8MBまで、最大10枚。失敗した写真は再試行できる（§8.4）。
+- **キー設計（§8.3）**：`notes/users/{userId}/{yyyy}/{mm}/{dd}/note_{imageId}.{ext}`。`imageId`・`ext`・日付はサーバ生成（`getNoteUploadUrl`）。`userId` はサーバ固定で、`createSession` はクライアント指定の `noteImages` を `notes/users/{固定userId}/` 接頭辞のものだけ受理する（§28.3/§23.8）。
+- **表示**：`getNoteImageUrls`（`sessionSk`）が各キーに閲覧用の署名付きGET URLを付けて返し、`calendar.html` のセッション詳細でサムネイル表示（タップで別タブに原寸）。
+- **Markdown**：`processSessionJob` が `session.noteImages` を Front Matter の `noteImages:` に記録する（§4.2/§23.2）。既存Markdownはカード更新で書き換えない方針のまま（§26）。
+- **CORS**：ブラウザ直PUTのため、データバケットに `aws_s3_bucket_cors_configuration`（PUT/GET/HEAD、初期版は全オリジン許可）を設定。IAMは既存の `s3:GetObject`/`s3:PutObject`（`${data.arn}/*`）で足りる。
+
 ## 将来Apple Speechを接続する場所
 
 `createSession` action は `transcript` という共通の文字列だけを受け取る設計にしている（SPEC.md §2.3）。将来Apple Speech経由の文字起こしを追加する場合、`transcript` を生成する経路を追加するだけでよく、`processSessionJob` 以降のAI分析・Markdown生成・保存処理は変更不要。
 
-## 現在未実装の機能（Phase 6完了時点）
+## 現在未実装の機能（Phase 7完了時点）
 
-- ノート写真アップロード（Phase 7）
-- カレンダーの新規カード数・復習予定数・要確認数（カレンダーへの集計表示。データは揃っているので表示追加のみ）
+- ノート写真のAI/OCR解析（§8.1で初期版では意図的に非対応。参照用のみ）
+- 最大ファイルサイズ・枚数の上限はクライアント側検証（署名付きPUT URLではサイズ強制ができないため。初期版の割り切り）
 - understandingScore（精度未検証のため意図的に省略。§28.7）
 - セッション保存の二重送信に対する冪等性はフロントの送信ボタン無効化のみ（復習の二重加算はサーバ側で防止済み）

@@ -69,6 +69,21 @@
     border-radius: 4px; padding: 0 4px; margin-top: 2px; max-width: 100%;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  .cell-cards { font-size: 0.62rem; color: var(--muted); margin-top: 2px; }
+  .cell-cards .new { color: var(--ok); }
+  .cell-cards .due { color: var(--accent); }
+  .summarybar { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0 4px; font-size: 0.85rem; }
+  .summarybar a {
+    display: inline-block; padding: 6px 12px; border: 1px solid var(--border);
+    border-radius: 6px; text-decoration: none; background: var(--cell-bg);
+  }
+  .summarybar a.hot { border-color: var(--accent); font-weight: bold; }
+  .note-images { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+  .note-images a { display: inline-block; }
+  .note-images img {
+    width: 120px; height: 120px; object-fit: cover; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--cell-bg);
+  }
   .status { margin-top: 12px; white-space: pre-wrap; font-size: 0.9rem; color: var(--muted); }
   .status.error { color: var(--error); }
   .view { margin-top: 16px; }
@@ -118,6 +133,7 @@
       <h2 id="monthLabel"></h2>
       <button type="button" id="nextMonthBtn">翌月 ›</button>
     </div>
+    <div class="summarybar" id="summaryBar"></div>
     <table class="calendar">
       <thead>
         <tr><th>日</th><th>月</th><th>火</th><th>水</th><th>木</th><th>金</th><th>土</th></tr>
@@ -143,13 +159,15 @@
 
 <script src="shared.js"></script>
 <script type="module">
-  import { monthPrefix, buildMonthGrid, aggregateByDate, shiftMonth } from "./calendar-core.mjs";
+  import { monthPrefix, buildMonthGrid, aggregateByDate, aggregateCardsByDate, shiftMonth } from "./calendar-core.mjs";
 
   const $ = (id) => document.getElementById(id);
   const now = new Date(Date.now() + 9 * 60 * 60 * 1000); // JST
+  const todayJst = now.toISOString().slice(0, 10);
   let viewYear = now.getUTCFullYear();
   let viewMonth = now.getUTCMonth() + 1;
   let currentAgg = {};
+  let cardAgg = { byDate: {}, dueCount: 0, needsReviewCount: 0 };
   let currentDay = null;
 
   function setStatus(message, type = "") {
@@ -170,13 +188,26 @@
     setStatus("読み込み中です...", "");
 
     try {
-      const data = await callApi({ action: "listSessions", yearMonth: ym });
-      currentAgg = aggregateByDate(data.sessions || []);
+      const [sessionData, cardData] = await Promise.all([
+        callApi({ action: "listSessions", yearMonth: ym }),
+        callApi({ action: "listCards" })
+      ]);
+      currentAgg = aggregateByDate(sessionData.sessions || []);
+      cardAgg = aggregateCardsByDate(cardData.cards || [], todayJst);
+      renderSummary();
       renderCalendar();
       setStatus("", "");
     } catch (error) {
       setStatus(error.message || "読み込みに失敗しました。", "error");
     }
+  }
+
+  function renderSummary() {
+    const due = cardAgg.dueCount || 0;
+    const need = cardAgg.needsReviewCount || 0;
+    $("summaryBar").innerHTML = `
+      <a href="review.html" class="${due ? "hot" : ""}">🔁 今日の復習 ${due}件</a>
+      <a href="cards.html" class="${need ? "hot" : ""}">⚠️ 要確認 ${need}件</a>`;
   }
 
   function renderCalendar() {
@@ -192,6 +223,7 @@
           td.className = "empty";
         } else {
           const agg = currentAgg[cell.dateStr];
+          const cards = cardAgg.byDate[cell.dateStr];
           td.innerHTML = `<div class="daynum">${cell.day}</div>`;
           if (agg) {
             td.className = "has-data";
@@ -202,6 +234,12 @@
               <div class="cell-min">${agg.totalMinutes}分</div>
               ${badges}`;
             td.addEventListener("click", () => openDay(cell.dateStr));
+          }
+          if (cards && (cards.newCards || cards.scheduledReviews)) {
+            const parts = [];
+            if (cards.newCards) parts.push(`<span class="new">+${cards.newCards}枚</span>`);
+            if (cards.scheduledReviews) parts.push(`<span class="due">🔁${cards.scheduledReviews}</span>`);
+            td.innerHTML += `<div class="cell-cards">${parts.join(" ")}</div>`;
           }
         }
         tr.appendChild(td);
@@ -284,7 +322,9 @@
         <h2>復習事項</h2>
         ${renderPointList(s.reviewItems)}
         <h2>関連カード</h2>
-        <p style="color:var(--muted)">(カード機能は今後のフェーズで実装)</p>
+        <p style="color:var(--muted)">${(s.cardIds || []).length}枚（<a href="cards.html">カード一覧</a>）</p>
+        <h2>ノート写真</h2>
+        <div class="note-images" id="noteImagesArea"><p style="color:var(--muted)">${(s.noteImages || []).length ? "読み込み中..." : "(なし)"}</p></div>
         <button type="button" id="viewMarkdownBtn" data-sk="${escapeHtml(sessionSk)}">Markdownを表示</button>
       `;
 
@@ -299,8 +339,27 @@
 
       setStatus("", "");
       showView("session");
+      loadNoteImages(sessionSk, (s.noteImages || []).length);
     } catch (error) {
       setStatus(error.message || "セッションの読み込みに失敗しました。", "error");
+    }
+  }
+
+  async function loadNoteImages(sessionSk, count) {
+    const area = $("noteImagesArea");
+    if (!area || !count) return;
+    try {
+      const data = await callApi({ action: "getNoteImageUrls", sessionSk });
+      const images = (data.images || []).filter((i) => i.url);
+      if (images.length === 0) {
+        area.innerHTML = "<p style='color:var(--muted)'>(表示できる写真がありません)</p>";
+        return;
+      }
+      area.innerHTML = images.map((i) =>
+        `<a href="${escapeHtml(i.url)}" target="_blank" rel="noopener"><img src="${escapeHtml(i.url)}" alt="ノート写真" loading="lazy"></a>`
+      ).join("");
+    } catch (error) {
+      area.innerHTML = "<p style='color:var(--muted)'>写真の読み込みに失敗しました。</p>";
     }
   }
 

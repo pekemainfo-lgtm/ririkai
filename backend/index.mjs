@@ -15,7 +15,8 @@ import {
   isReviewResult,
   applyReview
 } from "./lib/cards.mjs";
-import { sessionMarkdownKey, putSessionMarkdown, getSessionMarkdownUrl, DATA_BUCKET } from "./lib/storage.mjs";
+import { sessionMarkdownKey, putSessionMarkdown, getSessionMarkdownUrl, createNoteUploadUrl, getNoteImageViewUrl, DATA_BUCKET } from "./lib/storage.mjs";
+import { isOwnedNoteKey } from "./lib/keys.mjs";
 
 const REGION = "ap-northeast-1";
 const JOB_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -107,6 +108,11 @@ async function createSession(body) {
   const transcript = String(body.transcript || "").trim();
   const generateCards = body.generateCards !== false;
 
+  // クライアント指定のノートキーは自ユーザ配下のものだけ受理する（§28.3/§23.8）。最大10枚（§8.4）。
+  const noteImages = (Array.isArray(body.noteImages) ? body.noteImages : [])
+    .filter((key) => isOwnedNoteKey(USER_ID, key))
+    .slice(0, 10);
+
   const sessionItem = {
     PK: `USER#${USER_ID}`,
     SK: sessionSk,
@@ -123,6 +129,7 @@ async function createSession(body) {
     notUnderstoodNote,
     sessionStatus: "processing",
     markdownS3Key: null,
+    noteImages,
     understoodPoints: [],
     ambiguousPoints: [],
     misconceptions: [],
@@ -246,7 +253,7 @@ async function processSessionJob(body) {
       createdAt: session.createdAt,
       updatedAt: new Date().toISOString(),
       cardIds: [],
-      noteImages: [],
+      noteImages: session.noteImages || [],
       purpose: session.purpose,
       purposeJudgement: analysis.purposeJudgement,
       notUnderstoodItems: splitLines(job.input.notUnderstoodNote),
@@ -703,6 +710,55 @@ async function getSessionMarkdown(body) {
   return jsonResponse(200, { status: "ok", url });
 }
 
+// ノート写真アップロード用の署名付きPUT URLを発行する（§8.2）。
+// body: { contentType }
+async function getNoteUploadUrl(body) {
+  const contentType = String(body.contentType || "").trim().toLowerCase();
+
+  const result = await createNoteUploadUrl(USER_ID, contentType);
+  if (!result) {
+    return jsonResponse(400, {
+      status: "error",
+      errorCode: "INVALID_CONTENT_TYPE",
+      message: "添付できる画像は jpeg / png / webp / gif のみです。"
+    });
+  }
+
+  return jsonResponse(200, { status: "ok", ...result });
+}
+
+// セッションのノート写真に閲覧用の署名付きGET URLを付けて返す（§23.7）。
+// body: { sessionSk }
+async function getNoteImageUrls(body) {
+  const sessionSk = String(body.sessionSk || "").trim();
+
+  if (!sessionSk) {
+    return jsonResponse(400, { status: "error", errorCode: "NO_SESSION_SK", message: "sessionSk is required" });
+  }
+
+  const session = await getItem(sessionSk);
+  if (!session) {
+    return jsonResponse(404, { status: "error", errorCode: "SESSION_NOT_FOUND", message: "session not found" });
+  }
+
+  const keys = Array.isArray(session.noteImages) ? session.noteImages : [];
+  const images = [];
+
+  for (const s3Key of keys) {
+    // 自ユーザ配下のキーのみ署名する（保存時にサニタイズ済みだが二重に確認）。
+    if (!isOwnedNoteKey(USER_ID, s3Key)) continue;
+    try {
+      const url = await getNoteImageViewUrl(s3Key);
+      images.push({ s3Key, url });
+    } catch (error) {
+      console.error("getNoteImageViewUrl failed:", s3Key, error);
+      images.push({ s3Key });
+    }
+  }
+
+  return jsonResponse(200, { status: "ok", images });
+}
+
 export const handler = async (event) => {
   try {
     if (event?.requestContext?.http?.method === "OPTIONS") {
@@ -778,6 +834,14 @@ export const handler = async (event) => {
 
     if (action === "getSessionMarkdown") {
       return await getSessionMarkdown(body);
+    }
+
+    if (action === "getNoteUploadUrl") {
+      return await getNoteUploadUrl(body);
+    }
+
+    if (action === "getNoteImageUrls") {
+      return await getNoteImageUrls(body);
     }
 
     return jsonResponse(400, {

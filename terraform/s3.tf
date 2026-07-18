@@ -1,4 +1,4 @@
-# --- データバケット（Markdown。将来Phase 7でノート写真も同バケットに格納） ---
+# --- データバケット（Markdown ＋ ノート写真。§8） ---
 
 resource "aws_s3_bucket" "data" {
   bucket = var.data_bucket_name
@@ -32,6 +32,20 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "data" {
     apply_server_side_encryption_by_default {
       sse_algorithm = "AES256"
     }
+  }
+}
+
+# ノート写真をブラウザから署名付きURLで直接PUTするためのCORS設定（§8.2）。
+# 署名付きURL自体が時間制限付きの認可境界のため、初期版（単一利用者）では全オリジン許可で運用する。
+resource "aws_s3_bucket_cors_configuration" "data" {
+  bucket = aws_s3_bucket.data.id
+
+  cors_rule {
+    allowed_methods = ["PUT", "GET", "HEAD"]
+    allowed_origins = ["*"]
+    allowed_headers = ["*"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
   }
 }
 

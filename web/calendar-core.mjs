@@ -74,6 +74,54 @@ export function aggregateByDate(sessions) {
   return result;
 }
 
+// ISO日時(UTC)を日本時間の日付(YYYY-MM-DD)に変換する。backend/lib/dates.mjs と同じロジックだが、
+// calendar-core はブラウザからも読むため外部importを避けてここに持つ。
+function toJstDate(isoString) {
+  const t = Date.parse(isoString);
+  if (!Number.isFinite(t)) {
+    return String(isoString || "").slice(0, 10);
+  }
+  return new Date(t + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+// カードを日付ごとに集計する（カレンダー表示用）。
+// - byDate[date] = { newCards, scheduledReviews }
+//   newCards: その日に採用（createdAt の JST 日付）された有効カード数（merged 除外）
+//   scheduledReviews: その日が次回復習予定日の active カード数
+// - dueCount: 復習予定日が today 以前の active カード数（今日の復習件数）
+// - needsReviewCount: status==="needs_review" のカード数（要確認）
+export function aggregateCardsByDate(cards, today) {
+  const byDate = {};
+  let dueCount = 0;
+  let needsReviewCount = 0;
+
+  const ensure = (date) => {
+    if (!byDate[date]) byDate[date] = { newCards: 0, scheduledReviews: 0 };
+    return byDate[date];
+  };
+
+  for (const card of cards || []) {
+    if (!card) continue;
+
+    if (card.status === "needs_review") {
+      needsReviewCount += 1;
+    }
+
+    if (card.status === "merged") continue;
+
+    const createdDate = toJstDate(card.createdAt);
+    if (createdDate) ensure(createdDate).newCards += 1;
+
+    const nextReviewDate = card.review && card.review.nextReviewDate;
+    if (card.status === "active" && nextReviewDate) {
+      ensure(nextReviewDate).scheduledReviews += 1;
+      if (today && nextReviewDate <= today) dueCount += 1;
+    }
+  }
+
+  return { byDate, dueCount, needsReviewCount };
+}
+
 // 前月・翌月への移動。month は 1-12。
 export function shiftMonth(year, month, delta) {
   const zeroBased = month - 1 + delta;
