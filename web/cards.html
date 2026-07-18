@@ -78,8 +78,30 @@
   <!-- 詳細 -->
   <div id="detailView" hidden>
     <span class="backlink" id="detailBack">‹ 一覧へ戻る</span>
+
+    <div id="conflictPanel" hidden style="border:1px solid var(--error);border-radius:8px;padding:12px;margin-bottom:12px;">
+      <strong style="color:var(--error)">回答候補に矛盾があります（要確認）</strong>
+      <div id="conflictBody" style="font-size:0.9rem;margin-top:6px;"></div>
+      <label for="resolveAnswer">現在の正解として採用する内容</label>
+      <textarea id="resolveAnswer"></textarea>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button type="button" id="useExistingBtn" class="secondary">既存を採用</button>
+        <button type="button" id="useNewBtn" class="secondary">新しい候補を採用</button>
+        <button type="button" id="resolveBtn">この内容で確定</button>
+      </div>
+      <p class="status" id="resolveMsg"></p>
+    </div>
+
     <dl class="detail" id="cardDetail"></dl>
     <button type="button" id="editBtn">編集する</button>
+
+    <details style="margin-top:14px;">
+      <summary>別のカードをこのカードに統合する（手動統合）</summary>
+      <label for="mergeSource">統合元カード（このカードに吸収され、無効化されます）</label>
+      <select id="mergeSource"></select>
+      <button type="button" id="mergeBtn" class="secondary">統合する</button>
+      <p class="status" id="mergeMsg"></p>
+    </details>
   </div>
 
   <!-- 編集 -->
@@ -120,6 +142,7 @@
 <script>
   const $ = (id) => document.getElementById(id);
   let currentCard = null;
+  let allCards = [];
 
   function setStatus(message, type = "") {
     $("status").textContent = message;
@@ -137,6 +160,7 @@
     try {
       const data = await callApi({ action: "listCards" });
       const cards = data.cards || [];
+      allCards = cards;
       const container = $("cardList");
       container.innerHTML = "";
 
@@ -151,11 +175,13 @@
         div.className = "card-row";
         const nextReview = card.review?.nextReviewDate || "";
         const inactive = card.status === "inactive" ? '<span class="badge">無効</span>' : "";
+        const needsReview = card.status === "needs_review"
+          ? '<span class="badge" style="background:var(--error);color:#fff">要確認</span>' : "";
         div.innerHTML = `
           <h3>${escapeHtml(card.question || "(質問なし)")}</h3>
           <div class="card-meta">
             <span class="badge">${escapeHtml(card.cardType || "")}</span>
-            ${inactive}
+            ${needsReview}${inactive}
             ${escapeHtml(card.qualification || "")}｜${escapeHtml(card.subject || "")}
             ${nextReview ? "｜次回復習 " + escapeHtml(nextReview) : ""}
           </div>`;
@@ -178,6 +204,9 @@
         ? "<ul>" + c.supplement.map((s) => `<li>${escapeHtml(s)}</li>`).join("") + "</ul>"
         : "(なし)";
 
+      const statusLabel = c.status === "inactive" ? "無効"
+        : c.status === "needs_review" ? "要確認（矛盾）" : "有効";
+
       $("cardDetail").innerHTML = `
         <dt>質問</dt><dd>${escapeHtml(c.question || "")}</dd>
         <dt>答え（canonicalAnswer）</dt><dd>${escapeHtml(c.canonicalAnswer || "")}</dd>
@@ -186,10 +215,13 @@
         <dt>conceptKey</dt><dd>${escapeHtml(c.conceptKey || "")}</dd>
         <dt>資格・分野</dt><dd>${escapeHtml(c.qualification || "")}｜${escapeHtml(c.subject || "")}</dd>
         <dt>答えの出所</dt><dd>${c.answerSource === "user" ? "ユーザー編集" : "AI生成"}</dd>
-        <dt>状態</dt><dd>${c.status === "inactive" ? "無効" : "有効"}</dd>
+        <dt>状態</dt><dd>${statusLabel}</dd>
         <dt>次回復習日</dt><dd>${escapeHtml(c.review?.nextReviewDate || "")}</dd>
         <dt>出所セッション</dt><dd>${escapeHtml((c.sourceSessionIds || []).join(", ") || "(なし)")}</dd>
       `;
+
+      renderConflictPanel(c);
+      renderMergeSelector(c);
       setStatus("", "");
       showView("detail");
     } catch (error) {
@@ -250,10 +282,103 @@
     }
   }
 
+  // needs_review の解決UI（§11.4）
+  function renderConflictPanel(c) {
+    const panel = $("conflictPanel");
+    if (c.status !== "needs_review" || !c.pendingAnswer) {
+      panel.hidden = true;
+      return;
+    }
+    panel.hidden = false;
+    $("conflictBody").innerHTML = `
+      <div>既存の正解: ${escapeHtml(c.canonicalAnswer || "")}</div>
+      <div>新しい候補: ${escapeHtml(c.pendingAnswer.canonicalAnswer || "")}</div>`;
+    $("resolveAnswer").value = c.canonicalAnswer || "";
+    $("resolveMsg").textContent = "";
+  }
+
+  async function resolveConflict() {
+    if (!currentCard) return;
+    const canonicalAnswer = $("resolveAnswer").value.trim();
+    if (!canonicalAnswer) {
+      $("resolveMsg").textContent = "答えを入力してください。";
+      $("resolveMsg").className = "status error";
+      return;
+    }
+    $("resolveBtn").disabled = true;
+    $("resolveMsg").textContent = "確定中です...";
+    $("resolveMsg").className = "status";
+    try {
+      const res = await callApi({
+        action: "resolveConflict",
+        cardId: currentCard.cardId,
+        canonicalAnswer,
+        supplement: currentCard.supplement || []
+      });
+      currentCard = res.card;
+      await openDetail(currentCard.cardId);
+      await loadCards();
+    } catch (error) {
+      $("resolveMsg").textContent = error.message || "確定に失敗しました。";
+      $("resolveMsg").className = "status error";
+    } finally {
+      $("resolveBtn").disabled = false;
+    }
+  }
+
+  // 手動統合（§15）：このカード(target)へ別カード(source)を吸収する
+  function renderMergeSelector(c) {
+    const sel = $("mergeSource");
+    sel.innerHTML = '<option value="">選択してください</option>';
+    for (const card of allCards) {
+      if (card.cardId === c.cardId) continue;
+      if (card.status === "merged") continue;
+      const opt = document.createElement("option");
+      opt.value = card.cardId;
+      opt.textContent = `${card.question}（${card.cardType}）`;
+      sel.appendChild(opt);
+    }
+    $("mergeMsg").textContent = "";
+  }
+
+  async function mergeCards() {
+    if (!currentCard) return;
+    const sourceCardId = $("mergeSource").value;
+    if (!sourceCardId) {
+      $("mergeMsg").textContent = "統合元カードを選んでください。";
+      $("mergeMsg").className = "status error";
+      return;
+    }
+    $("mergeBtn").disabled = true;
+    $("mergeMsg").textContent = "統合中です...";
+    $("mergeMsg").className = "status";
+    try {
+      const res = await callApi({
+        action: "mergeCardsManual",
+        targetCardId: currentCard.cardId,
+        sourceCardId
+      });
+      currentCard = res.card;
+      await openDetail(currentCard.cardId);
+      await loadCards();
+      $("mergeMsg").textContent = "統合しました。";
+      $("mergeMsg").className = "status ok";
+    } catch (error) {
+      $("mergeMsg").textContent = error.message || "統合に失敗しました。";
+      $("mergeMsg").className = "status error";
+    } finally {
+      $("mergeBtn").disabled = false;
+    }
+  }
+
   $("detailBack").addEventListener("click", () => showView("list"));
   $("editBack").addEventListener("click", () => showView("detail"));
   $("editBtn").addEventListener("click", openEdit);
   $("saveEditBtn").addEventListener("click", saveEdit);
+  $("useExistingBtn").addEventListener("click", () => { $("resolveAnswer").value = currentCard?.canonicalAnswer || ""; });
+  $("useNewBtn").addEventListener("click", () => { $("resolveAnswer").value = currentCard?.pendingAnswer?.canonicalAnswer || ""; });
+  $("resolveBtn").addEventListener("click", resolveConflict);
+  $("mergeBtn").addEventListener("click", mergeCards);
   $("saveApiUrlBtn").addEventListener("click", () => {
     setApiUrl($("apiUrl").value);
     setStatus("API URLを保存しました。再読み込みします。", "");

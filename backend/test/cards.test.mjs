@@ -6,7 +6,10 @@ import {
   sanitizeCardType,
   buildCardItem,
   validateCardInput,
-  normalizeCardCandidates
+  normalizeCardCandidates,
+  findDuplicateCards,
+  integrateAnswer,
+  mergeCardData
 } from "../lib/cards.mjs";
 
 test("normalizeQuestion: 表記ゆれ（空白・句読点・大小）を吸収する", () => {
@@ -82,4 +85,106 @@ test("normalizeCardCandidates: 空要素除去と上限", () => {
 
   const many = Array.from({ length: 15 }, (_, i) => ({ question: `q${i}`, canonicalAnswer: "a" }));
   assert.equal(normalizeCardCandidates(many).length, 10);
+});
+
+// --- Phase 5: 重複統合 ---
+
+const existingDefinition = {
+  cardId: "card_def",
+  cardType: "definition",
+  conceptKey: "aws:nat-gateway",
+  question: "NAT Gatewayとは？",
+  normalizedQuestion: normalizeQuestion("NAT Gatewayとは？"),
+  canonicalAnswer: "プライベートサブネットの外向き通信用のマネージドサービス。",
+  supplement: ["パブリックサブネットに配置"],
+  sourceSessionIds: ["session_a"],
+  answerSource: "ai",
+  status: "active",
+  review: { reviewCount: 2, correctCount: 1, uncertainCount: 1, incorrectCount: 0, nextReviewDate: "2026-07-25", masteryLevel: 1 }
+};
+
+test("findDuplicateCards ケースA: 同conceptKey+cardType・言い換え質問は重複", () => {
+  const candidate = { question: "NAT Gatewayの役割を説明してください。", cardType: "definition", conceptKey: "aws:nat-gateway" };
+  const dups = findDuplicateCards(candidate, [existingDefinition]);
+  assert.equal(dups.length, 1);
+  assert.equal(dups[0].cardId, "card_def");
+});
+
+test("findDuplicateCards ケースB: 同用語でも別conceptKey/別cardTypeは非重複", () => {
+  const placement = { question: "NAT Gatewayはどのサブネットに配置する？", cardType: "condition", conceptKey: "aws:nat-gateway-placement" };
+  assert.equal(findDuplicateCards(placement, [existingDefinition]).length, 0);
+
+  const diff = { question: "NAT GatewayとInternet Gatewayの違いは？", cardType: "comparison", conceptKey: "aws:nat-vs-igw" };
+  assert.equal(findDuplicateCards(diff, [existingDefinition]).length, 0);
+});
+
+test("findDuplicateCards: normalizedQuestion一致でも重複", () => {
+  const candidate = { question: "ｎａｔ　ｇａｔｅｗａｙとは?", cardType: "definition", conceptKey: "other:key" };
+  // 全角/半角は正規化されないので通常の表記で確認
+  const same = { question: "NAT Gatewayとは？？", cardType: "misconception", conceptKey: "" };
+  assert.equal(findDuplicateCards(same, [existingDefinition]).length, 1);
+});
+
+test("findDuplicateCards: merged/inactiveは除外", () => {
+  const candidate = { question: "NAT Gatewayとは？", cardType: "definition", conceptKey: "aws:nat-gateway" };
+  assert.equal(findDuplicateCards(candidate, [{ ...existingDefinition, status: "merged" }]).length, 0);
+  assert.equal(findDuplicateCards(candidate, [{ ...existingDefinition, status: "inactive" }]).length, 0);
+});
+
+test("integrateAnswer: 回答一致→merged（supplement union・session追加）", () => {
+  const { result, card } = integrateAnswer(
+    existingDefinition,
+    "プライベートサブネットの外向き通信用のマネージドサービス。",
+    ["Elastic IPを関連付ける"],
+    "session_b",
+    "2026-07-18T00:00:00.000Z"
+  );
+  assert.equal(result, "merged");
+  assert.deepEqual(card.supplement, ["パブリックサブネットに配置", "Elastic IPを関連付ける"]);
+  assert.ok(card.sourceSessionIds.includes("session_b"));
+  assert.equal(card.status, "active");
+  assert.equal(card.pendingAnswer, undefined);
+});
+
+test("integrateAnswer ケースC: 回答矛盾→needs_review（pendingAnswer退避、既存維持）", () => {
+  const { result, card } = integrateAnswer(
+    existingDefinition,
+    "パブリックサブネットに置く着信用サービス。", // 矛盾する内容
+    [],
+    "session_c",
+    "2026-07-18T00:00:00.000Z"
+  );
+  assert.equal(result, "needs_review");
+  assert.equal(card.status, "needs_review");
+  assert.equal(card.canonicalAnswer, existingDefinition.canonicalAnswer); // 既存は変えない
+  assert.equal(card.pendingAnswer.canonicalAnswer, "パブリックサブネットに置く着信用サービス。");
+  assert.ok(card.sourceSessionIds.includes("session_c"));
+});
+
+test("integrateAnswer: 既存user編集済み＋回答不一致→needs_review", () => {
+  const userCard = { ...existingDefinition, answerSource: "user" };
+  const { result } = integrateAnswer(userCard, "別の答え", [], "session_d");
+  assert.equal(result, "needs_review");
+});
+
+test("mergeCardData: sourceを吸収しreview集計合算・source merged（§15）", () => {
+  const target = existingDefinition;
+  const source = {
+    ...existingDefinition,
+    cardId: "card_src",
+    sourceSessionIds: ["session_x"],
+    supplement: ["別の補足"],
+    createdAt: "2026-07-10T00:00:00.000Z",
+    review: { reviewCount: 3, correctCount: 2, uncertainCount: 0, incorrectCount: 1, nextReviewDate: "2026-07-20", masteryLevel: 2 }
+  };
+  const { target: t, source: s } = mergeCardData({ ...target, createdAt: "2026-07-15T00:00:00.000Z" }, source, "2026-07-18T00:00:00.000Z");
+
+  assert.deepEqual(t.sourceSessionIds.sort(), ["session_a", "session_x"]);
+  assert.ok(t.supplement.includes("別の補足"));
+  assert.equal(t.review.reviewCount, 5);
+  assert.equal(t.review.incorrectCount, 1);
+  assert.equal(t.review.nextReviewDate, "2026-07-20"); // 早い方
+  assert.equal(t.createdAt, "2026-07-10T00:00:00.000Z"); // 早い方
+  assert.equal(s.status, "merged");
+  assert.equal(s.mergedIntoCardId, "card_def");
 });

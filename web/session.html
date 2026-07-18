@@ -184,7 +184,9 @@
   const $ = (id) => document.getElementById(id);
   let isSaving = false;
   let currentSessionSk = null;
+  let currentSessionId = null;
   let currentCandidates = [];
+  let pendingAdoption = null; // { selected, results }
 
   function todayJst() {
     const now = new Date();
@@ -218,6 +220,7 @@
     renderList("misconceptions", session.misconceptions);
     renderList("confirmQuestions", session.confirmQuestions);
     renderList("reviewItems", session.reviewItems);
+    currentSessionId = session.sessionId || null;
     currentCandidates = session.cardCandidates || [];
     renderCardCandidates(session);
   }
@@ -309,15 +312,11 @@
     });
   }
 
-  async function adoptCards() {
-    if (!currentSessionSk) return;
+  function collectSelectedCards() {
     const rows = Array.from(document.querySelectorAll("#cardCandidates .card-cand"));
     const cards = [];
-
     for (const row of rows) {
-      const checked = row.querySelector(".cand-check").checked;
-      if (!checked) continue;
-
+      if (!row.querySelector(".cand-check").checked) continue;
       const original = currentCandidates[Number(row.dataset.index)] || {};
       const question = row.querySelector(".cand-question").value.trim();
       const canonicalAnswer = row.querySelector(".cand-answer").value.trim();
@@ -325,41 +324,157 @@
         .split("\n").map((s) => s.trim()).filter(Boolean);
       if (!question || !canonicalAnswer) continue;
 
-      // 編集されていれば answerSource=user とする
       const edited = question !== (original.question || "") ||
         canonicalAnswer !== (original.canonicalAnswer || "") ||
         supplement.join("\n") !== (original.supplement || []).join("\n");
 
       cards.push({
-        question,
-        canonicalAnswer,
-        supplement,
+        question, canonicalAnswer, supplement,
         cardType: original.cardType,
         conceptKey: original.conceptKey,
         answerSource: edited ? "user" : "ai"
       });
     }
+    return cards;
+  }
 
-    if (cards.length === 0) {
+  // 採用ボタン：まず重複を確認し、重複があれば§10.5の選択UIを出す。
+  async function onAdoptClick() {
+    if (!currentSessionSk) return;
+
+    // 重複解決UIが出ている場合は確定処理へ
+    if (pendingAdoption) {
+      await performAdoption();
+      return;
+    }
+
+    const selected = collectSelectedCards();
+    if (selected.length === 0) {
       $("adoptStatus").textContent = "採用するカードが選ばれていません。";
       $("adoptStatus").className = "status error";
       return;
     }
 
     $("adoptCardsBtn").disabled = true;
-    $("adoptStatus").textContent = "保存中です...";
+    $("adoptStatus").textContent = "重複を確認中です...";
     $("adoptStatus").className = "status";
 
     try {
-      const res = await callApi({ action: "adoptCards", sessionSk: currentSessionSk, cards });
-      $("adoptStatus").textContent = res.message || `${(res.cards || []).length}枚を保存しました。`;
-      $("adoptStatus").className = "status ok";
+      const res = await callApi({
+        action: "checkDuplicates",
+        cards: selected.map((c) => ({ question: c.question, cardType: c.cardType, conceptKey: c.conceptKey }))
+      });
+      const results = res.results || [];
+      const hasDup = results.some((r) => (r.duplicates || []).length > 0);
+
+      pendingAdoption = { selected, results };
+
+      if (!hasDup) {
+        await performAdoption();
+      } else {
+        renderDuplicateDecisions();
+      }
+    } catch (error) {
+      $("adoptStatus").textContent = error.message || "重複確認に失敗しました。";
+      $("adoptStatus").className = "status error";
+      pendingAdoption = null;
+    } finally {
+      $("adoptCardsBtn").disabled = false;
+    }
+  }
+
+  // §10.5：重複のある候補ごとに、既存カード更新／新規保存／破棄を選ばせる。
+  function renderDuplicateDecisions() {
+    const { selected, results } = pendingAdoption;
+    const container = $("cardCandidates");
+
+    results.forEach((r, i) => {
+      const dups = r.duplicates || [];
+      const block = document.createElement("div");
+      block.className = "card-cand";
+      block.dataset.decisionIndex = i;
+
+      if (dups.length === 0) {
+        block.innerHTML = `<div class="reason">新規保存: ${escapeHtml(selected[i].question)}</div>`;
+        block.dataset.decision = "new";
+      } else {
+        const d = dups[0];
+        block.innerHTML = `
+          <div style="font-size:0.85rem;">既存カードと内容が近い可能性があります。</div>
+          <div class="reason">既存: ${escapeHtml(d.question)} ／ ${escapeHtml(d.canonicalAnswer)}</div>
+          <div class="reason">新規候補: ${escapeHtml(selected[i].question)} ／ ${escapeHtml(selected[i].canonicalAnswer)}</div>
+          <label><input type="radio" name="dec${i}" value="merge" checked style="width:auto"> 既存カードを更新（統合）</label>
+          <label><input type="radio" name="dec${i}" value="new" style="width:auto"> 新規カードとして保存</label>
+          <label><input type="radio" name="dec${i}" value="skip" style="width:auto"> 破棄</label>
+        `;
+        block.dataset.dupCardId = d.cardId;
+      }
+      container.appendChild(block);
+    });
+
+    $("cardCandidatesHint").textContent = "重複の可能性があるカードの扱いを選び、「確定して保存」を押してください。";
+    $("adoptCardsBtn").textContent = "確定して保存";
+  }
+
+  async function performAdoption() {
+    const { selected, results } = pendingAdoption;
+    $("adoptCardsBtn").disabled = true;
+    $("adoptStatus").textContent = "保存中です...";
+    $("adoptStatus").className = "status";
+
+    const newCards = [];
+    const mergeOps = [];
+
+    results.forEach((r, i) => {
+      const dups = r.duplicates || [];
+      let decision = "new";
+      if (dups.length > 0) {
+        const picked = document.querySelector(`input[name="dec${i}"]:checked`);
+        decision = picked ? picked.value : "merge";
+      }
+      if (decision === "new") {
+        newCards.push(selected[i]);
+      } else if (decision === "merge") {
+        mergeOps.push({ cardId: dups[0].cardId, card: selected[i] });
+      }
+    });
+
+    let savedNew = 0, merged = 0, needsReview = 0;
+    const errors = [];
+
+    try {
+      if (newCards.length > 0) {
+        const res = await callApi({ action: "adoptCards", sessionSk: currentSessionSk, cards: newCards });
+        savedNew = (res.cards || []).length;
+      }
+      for (const op of mergeOps) {
+        try {
+          const res = await callApi({
+            action: "mergeAnswerIntoCard",
+            cardId: op.cardId,
+            canonicalAnswer: op.card.canonicalAnswer,
+            supplement: op.card.supplement,
+            sourceSessionId: currentSessionId,
+            sessionSk: currentSessionSk
+          });
+          if (res.result === "needs_review") needsReview++; else merged++;
+        } catch (e) {
+          errors.push(e.message || "統合に失敗");
+        }
+      }
+
+      let msg = `新規${savedNew}枚・統合${merged}件`;
+      if (needsReview > 0) msg += `・要確認${needsReview}件（矛盾のためカード一覧で確認してください）`;
+      if (errors.length) msg += `・失敗${errors.length}件`;
+      $("adoptStatus").textContent = msg + "を保存しました。";
+      $("adoptStatus").className = errors.length ? "status error" : "status ok";
       $("adoptCardsBtn").hidden = true;
     } catch (error) {
       $("adoptStatus").textContent = error.message || "カードの保存に失敗しました。";
       $("adoptStatus").className = "status error";
     } finally {
       $("adoptCardsBtn").disabled = false;
+      pendingAdoption = null;
     }
   }
 
@@ -427,7 +542,7 @@
     }
   });
 
-  $("adoptCardsBtn").addEventListener("click", adoptCards);
+  $("adoptCardsBtn").addEventListener("click", onAdoptClick);
 
   $("saveApiUrlBtn").addEventListener("click", () => {
     setApiUrl($("apiUrl").value);

@@ -4,7 +4,15 @@ import { toJstDate } from "./lib/dates.mjs";
 import { validateCreateSessionInput } from "./lib/validate.mjs";
 import { buildSessionMarkdown } from "./lib/markdown.mjs";
 import { callOpenAIForAnalysis, callOpenAIForCards } from "./lib/openai.mjs";
-import { buildCardItem, validateCardInput, sanitizeCardType, normalizeQuestion } from "./lib/cards.mjs";
+import {
+  buildCardItem,
+  validateCardInput,
+  sanitizeCardType,
+  normalizeQuestion,
+  findDuplicateCards,
+  integrateAnswer,
+  mergeCardData
+} from "./lib/cards.mjs";
 import { sessionMarkdownKey, putSessionMarkdown, getSessionMarkdownUrl, DATA_BUCKET } from "./lib/storage.mjs";
 
 const REGION = "ap-northeast-1";
@@ -426,6 +434,135 @@ async function listCards(body) {
   return jsonResponse(200, { status: "ok", cards });
 }
 
+// 候補カードに対して既存カードの重複を返す（採用前に§10.5の選択UIを出すため）。
+// body: { cards: [{question, canonicalAnswer, cardType, conceptKey}] }
+async function checkDuplicates(body) {
+  const candidates = Array.isArray(body.cards) ? body.cards : [];
+  const existing = await queryByPrefix("CARD#", { limit: 500, scanIndexForward: false });
+
+  const results = candidates.map((candidate, index) => {
+    const dups = findDuplicateCards(candidate, existing).map((c) => ({
+      cardId: c.cardId,
+      question: c.question,
+      canonicalAnswer: c.canonicalAnswer,
+      cardType: c.cardType,
+      conceptKey: c.conceptKey,
+      status: c.status,
+      answerSource: c.answerSource
+    }));
+    return { index, duplicates: dups };
+  });
+
+  return jsonResponse(200, { status: "ok", results });
+}
+
+// 既存カードへ新しい回答を統合する（§11）。矛盾は needs_review になる。
+// body: { cardId, canonicalAnswer, supplement[], sourceSessionId }
+async function mergeAnswerIntoCard(body) {
+  const cardId = String(body.cardId || "").trim();
+  if (!cardId) {
+    return jsonResponse(400, { status: "error", errorCode: "NO_CARD_ID", message: "cardId is required" });
+  }
+
+  const card = await getItem(`CARD#${cardId}`);
+  if (!card) {
+    return jsonResponse(404, { status: "error", errorCode: "CARD_NOT_FOUND", message: "card not found" });
+  }
+
+  const answer = String(body.canonicalAnswer || "").trim();
+  if (!answer) {
+    return jsonResponse(400, { status: "error", errorCode: "NO_ANSWER", message: "答えが未入力です。" });
+  }
+
+  const sourceSessionId = String(body.sourceSessionId || "").trim();
+  const { result, card: updated } = integrateAnswer(card, answer, body.supplement, sourceSessionId);
+
+  await putItem(updated);
+
+  // セッションとの相互参照（このカードを当該セッションに紐づける）。
+  // SESSIONアイテムのSKは createdAt ベースなので、フロントから sessionSk を渡せた場合のみ追記する。
+  if (body.sessionSk) {
+    const session = await getItem(String(body.sessionSk).trim());
+    if (session && !(session.cardIds || []).includes(cardId)) {
+      await putItem({
+        ...session,
+        cardIds: [...(session.cardIds || []), cardId],
+        updatedAt: new Date().toISOString()
+      });
+    }
+  }
+
+  return jsonResponse(200, { status: "ok", result, card: updated });
+}
+
+// needs_review を解決する（§11.4）。利用者が最終的な canonicalAnswer を確定する。
+// body: { cardId, canonicalAnswer, supplement[] }
+async function resolveConflict(body) {
+  const cardId = String(body.cardId || "").trim();
+  if (!cardId) {
+    return jsonResponse(400, { status: "error", errorCode: "NO_CARD_ID", message: "cardId is required" });
+  }
+
+  const card = await getItem(`CARD#${cardId}`);
+  if (!card) {
+    return jsonResponse(404, { status: "error", errorCode: "CARD_NOT_FOUND", message: "card not found" });
+  }
+
+  const canonicalAnswer = String(body.canonicalAnswer || "").trim();
+  if (!canonicalAnswer) {
+    return jsonResponse(400, { status: "error", errorCode: "NO_ANSWER", message: "答えが未入力です。" });
+  }
+
+  const supplement = Array.isArray(body.supplement)
+    ? body.supplement.map((s) => String(s || "").trim()).filter(Boolean).slice(0, 8)
+    : card.supplement;
+
+  const updated = {
+    ...card,
+    canonicalAnswer,
+    normalizedQuestion: card.normalizedQuestion || normalizeQuestion(card.question),
+    supplement,
+    status: "active",
+    answerSource: "user",
+    pendingAnswer: null,
+    updatedAt: new Date().toISOString()
+  };
+
+  await putItem(updated);
+
+  return jsonResponse(200, { status: "ok", card: updated });
+}
+
+// 利用者による手動統合（§15）。source を target へ吸収し、source は merged にする。
+// body: { targetCardId, sourceCardId }
+async function mergeCardsManual(body) {
+  const targetCardId = String(body.targetCardId || "").trim();
+  const sourceCardId = String(body.sourceCardId || "").trim();
+
+  if (!targetCardId || !sourceCardId) {
+    return jsonResponse(400, { status: "error", errorCode: "MISSING_CARD_ID", message: "targetCardId and sourceCardId are required" });
+  }
+  if (targetCardId === sourceCardId) {
+    return jsonResponse(400, { status: "error", errorCode: "SAME_CARD", message: "統合元と統合先が同じです。" });
+  }
+
+  const [target, source] = await Promise.all([
+    getItem(`CARD#${targetCardId}`),
+    getItem(`CARD#${sourceCardId}`)
+  ]);
+
+  if (!target || !source) {
+    return jsonResponse(404, { status: "error", errorCode: "CARD_NOT_FOUND", message: "card not found" });
+  }
+
+  const { target: mergedTarget, source: mergedSource } = mergeCardData(target, source);
+
+  await putItem(mergedTarget);
+  await putItem(mergedSource);
+
+  return jsonResponse(200, { status: "ok", card: mergedTarget });
+}
+
 async function getCard(body) {
   const cardId = String(body.cardId || "").trim();
   if (!cardId) {
@@ -546,6 +683,22 @@ export const handler = async (event) => {
 
     if (action === "updateCard") {
       return await updateCard(body);
+    }
+
+    if (action === "checkDuplicates") {
+      return await checkDuplicates(body);
+    }
+
+    if (action === "mergeAnswerIntoCard") {
+      return await mergeAnswerIntoCard(body);
+    }
+
+    if (action === "resolveConflict") {
+      return await resolveConflict(body);
+    }
+
+    if (action === "mergeCardsManual") {
+      return await mergeCardsManual(body);
     }
 
     if (action === "getSessionMarkdown") {

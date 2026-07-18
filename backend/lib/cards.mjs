@@ -118,3 +118,130 @@ export function normalizeCardCandidates(cards, max = 10) {
     .filter((card) => card.question && card.canonicalAnswer)
     .slice(0, max);
 }
+
+// --- Phase 5: 重複統合 ---
+
+// 回答比較用の正規化（質問と同系。重複・矛盾の比較に使う）。
+export function normalizeAnswer(text) {
+  return normalizeQuestion(text);
+}
+
+function unionStrings(a, b, max = 12) {
+  const seen = new Set();
+  const result = [];
+  for (const x of [...(a || []), ...(b || [])]) {
+    const s = String(x || "").trim();
+    if (!s || seen.has(s)) continue;
+    seen.add(s);
+    result.push(s);
+    if (result.length >= max) break;
+  }
+  return result;
+}
+
+// 候補カードと重複する既存カードを探す（§10.4 初期版・§28.6）。
+// 除外: status が merged / inactive のカード。
+// マッチ: (conceptKey非空で一致 かつ cardType一致) または normalizedQuestion一致。
+export function findDuplicateCards(candidate, existingCards) {
+  const candType = sanitizeCardType(candidate?.cardType);
+  const candConcept = String(candidate?.conceptKey || "").trim();
+  const candNormQ = normalizeQuestion(candidate?.question);
+
+  return (existingCards || []).filter((card) => {
+    if (!card) return false;
+    if (card.status === "merged" || card.status === "inactive") return false;
+
+    const sameConceptType =
+      candConcept && String(card.conceptKey || "").trim() === candConcept &&
+      sanitizeCardType(card.cardType) === candType;
+
+    const sameQuestion =
+      candNormQ && String(card.normalizedQuestion || normalizeQuestion(card.question)) === candNormQ;
+
+    return sameConceptType || sameQuestion;
+  });
+}
+
+// 既存カードへ新しい回答を統合する（§11）。
+// - 既存が user 編集済みで回答が異なる → needs_review（§14：勝手に上書きしない）
+// - 回答が正規化一致 → merged（回答は既存維持、supplementをunion、sourceSessionIds追加）
+// - それ以外（回答が異なる） → needs_review（既存維持・pendingAnswerに新規退避）（§11.4）
+export function integrateAnswer(existingCard, newAnswer, newSupplement, newSessionId, now = new Date().toISOString()) {
+  const answer = String(newAnswer || "").trim();
+  const supplement = toSupplement(newSupplement);
+  const sameAnswer = normalizeAnswer(existingCard.canonicalAnswer) === normalizeAnswer(answer);
+
+  const withSession = newSessionId && !(existingCard.sourceSessionIds || []).includes(newSessionId)
+    ? [...(existingCard.sourceSessionIds || []), newSessionId]
+    : (existingCard.sourceSessionIds || []);
+
+  if (sameAnswer) {
+    return {
+      result: "merged",
+      card: {
+        ...existingCard,
+        supplement: unionStrings(existingCard.supplement, supplement),
+        sourceSessionIds: withSession,
+        status: existingCard.status === "needs_review" ? existingCard.status : "active",
+        updatedAt: now
+      }
+    };
+  }
+
+  // 回答が異なる（user編集済みか否かを問わず）→ 自動確定せず利用者へ（§11.4/§14）
+  return {
+    result: "needs_review",
+    card: {
+      ...existingCard,
+      status: "needs_review",
+      pendingAnswer: {
+        canonicalAnswer: answer,
+        supplement,
+        sourceSessionId: newSessionId || ""
+      },
+      sourceSessionIds: withSession,
+      updatedAt: now
+    }
+  };
+}
+
+function sumReview(a = {}, b = {}) {
+  const pick = (o, k) => Number(o?.[k] || 0);
+  const minDate = (x, y) => {
+    if (!x) return y;
+    if (!y) return x;
+    return x < y ? x : y;
+  };
+  return {
+    lastReviewedAt: a.lastReviewedAt || b.lastReviewedAt || null,
+    nextReviewDate: minDate(a.nextReviewDate, b.nextReviewDate),
+    reviewCount: pick(a, "reviewCount") + pick(b, "reviewCount"),
+    correctCount: pick(a, "correctCount") + pick(b, "correctCount"),
+    uncertainCount: pick(a, "uncertainCount") + pick(b, "uncertainCount"),
+    incorrectCount: pick(a, "incorrectCount") + pick(b, "incorrectCount"),
+    masteryLevel: Math.max(Number(a?.masteryLevel || 0), Number(b?.masteryLevel || 0))
+  };
+}
+
+// 手動統合（§15）。target に source を吸収し、source は merged にする。
+export function mergeCardData(target, source, now = new Date().toISOString()) {
+  const mergedTarget = {
+    ...target,
+    sourceSessionIds: unionStrings(target.sourceSessionIds, source.sourceSessionIds, 50),
+    supplement: unionStrings(target.supplement, source.supplement),
+    review: sumReview(target.review, source.review),
+    createdAt: target.createdAt && source.createdAt
+      ? (target.createdAt < source.createdAt ? target.createdAt : source.createdAt)
+      : (target.createdAt || source.createdAt),
+    updatedAt: now
+  };
+
+  const mergedSource = {
+    ...source,
+    status: "merged",
+    mergedIntoCardId: target.cardId,
+    updatedAt: now
+  };
+
+  return { target: mergedTarget, source: mergedSource };
+}
