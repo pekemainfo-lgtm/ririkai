@@ -4,6 +4,13 @@ resource "aws_dynamodb_table" "ririkai" {
   hash_key     = "PK"
   range_key    = "SK"
 
+  # 実データ保護（§17）。誤操作からの復旧と、テーブルの誤削除防止。
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  deletion_protection_enabled = true
+
   attribute {
     name = "PK"
     type = "S"

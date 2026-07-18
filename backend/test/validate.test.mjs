@@ -34,3 +34,22 @@ test("durationMinutesが0以下だとINVALID_DURATION", () => {
   assert.equal(result.ok, false);
   assert.equal(result.errorCode, "INVALID_DURATION");
 });
+
+test("mode未指定はok（下流でinput既定）", () => {
+  const result = validateCreateSessionInput({ transcript: "a".repeat(30), subject: "AWS", durationMinutes: 25 });
+  assert.equal(result.ok, true);
+});
+
+test("mode=input/practice/fastはok", () => {
+  for (const mode of ["input", "practice", "fast"]) {
+    const result = validateCreateSessionInput({ transcript: "a".repeat(30), subject: "AWS", durationMinutes: 25, mode });
+    assert.equal(result.ok, true, `mode=${mode} should be ok`);
+  }
+});
+
+test("不正なmodeはINVALID_MODEで拒否", () => {
+  const result = validateCreateSessionInput({ transcript: "a".repeat(30), subject: "AWS", durationMinutes: 25, mode: "turbo" });
+  assert.equal(result.ok, false);
+  assert.equal(result.statusCode, 400);
+  assert.equal(result.errorCode, "INVALID_MODE");
+});

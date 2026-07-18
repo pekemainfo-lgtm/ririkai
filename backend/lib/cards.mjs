@@ -46,6 +46,13 @@ export function sanitizeStudyMode(value) {
   return STUDY_MODES.has(v) ? v : "input";
 }
 
+// 補足行の由来モード用の正規化。セッションの mode（既定 input）とは別扱いで、
+// 由来が不明な旧データ行は input と断定せず "legacy" とする（表示順では末尾＝MODE_PRIORITY未定義）。
+export function supplementLineMode(value) {
+  const v = String(value || "").trim();
+  return STUDY_MODES.has(v) ? v : "legacy";
+}
+
 function toSupplement(value, max = 8) {
   if (!Array.isArray(value)) return [];
   return value.map((x) => String(x || "").trim()).filter(Boolean).slice(0, max);
@@ -174,7 +181,7 @@ function mergeSupplementLists(entries, max = 12) {
       if (!s || seen.has(s)) continue;
       seen.add(s);
       supplement.push(s);
-      supplementModes.push(sanitizeStudyMode(modes[i]));
+      supplementModes.push(supplementLineMode(modes[i]));
     }
   }
   return { supplement, supplementModes };
@@ -207,6 +214,20 @@ export function sortSupplementByMode(supplement, supplementModes) {
     .map((text, index) => ({ text, p: priority(modes[index]), index }))
     .sort((a, b) => a.p - b.p || a.index - b.index)
     .map((x) => x.text);
+}
+
+// 手動編集・矛盾解決で supplement を差し替える際、supplementModes を新しい配列と長さ・順序を揃えて作り直す。
+// 変更のない行は元のモードを保ち、新規/編集された行や由来不明の行は "legacy"（末尾表示）にする。
+export function realignSupplementModes(newSupplement, oldSupplement, oldSupplementModes) {
+  const news = Array.isArray(newSupplement) ? newSupplement : [];
+  const olds = Array.isArray(oldSupplement) ? oldSupplement : [];
+  const oldModes = Array.isArray(oldSupplementModes) ? oldSupplementModes : [];
+  const byText = new Map();
+  olds.forEach((t, i) => {
+    const key = String(t);
+    if (!byText.has(key)) byText.set(key, oldModes[i]);
+  });
+  return news.map((t) => supplementLineMode(byText.get(String(t))));
 }
 
 // 候補カードと重複する既存カードを探す（§10.4 初期版・§28.6）。
@@ -267,17 +288,27 @@ export function integrateAnswer(existingCard, newAnswer, newSupplement, newSessi
   }
 
   // 回答が異なる（user編集済みか否かを問わず）→ 自動確定せず利用者へ（§11.4/§14）
+  const newPending = {
+    canonicalAnswer: answer,
+    supplement,
+    mode,
+    sourceSessionId: newSessionId || ""
+  };
+  // 既存の未解決候補を新しい候補で黙って捨てない（§7）。pendingAnswers に蓄積し、
+  // pendingAnswer には後方互換のため最新候補を入れる。同一回答（正規化一致）は重複させない。
+  const priorPending = Array.isArray(existingCard.pendingAnswers)
+    ? existingCard.pendingAnswers
+    : (existingCard.pendingAnswer ? [existingCard.pendingAnswer] : []);
+  const alreadyHas = priorPending.some((p) => normalizeAnswer(p?.canonicalAnswer) === normalizeAnswer(answer));
+  const pendingAnswers = alreadyHas ? priorPending : [...priorPending, newPending];
+
   return {
     result: "needs_review",
     card: {
       ...existingCard,
       status: "needs_review",
-      pendingAnswer: {
-        canonicalAnswer: answer,
-        supplement,
-        mode,
-        sourceSessionId: newSessionId || ""
-      },
+      pendingAnswer: newPending,
+      pendingAnswers,
       sourceSessionIds: withSession,
       updatedAt: now
     }
@@ -379,7 +410,12 @@ export function applyReview(card, result, nowIso = new Date().toISOString()) {
     againCount: num(prev.againCount) + (result === "again" ? 1 : 0),
     masteredCount: num(prev.masteredCount) + (result === "mastered" ? 1 : 0),
     masteryLevel,
-    mastered: result === "mastered" ? true : Boolean(prev.mastered)
+    mastered: result === "mastered" ? true : Boolean(prev.mastered),
+    // mastered にした時刻を記録（将来の「最近mastered順」やリリカイ復帰分析に使う）。
+    masteredAt: result === "mastered" ? nowIso : (prev.masteredAt || null),
+    // 復帰履歴は reactivateCard 側で更新。ここでは既存値を保持する。
+    lastReactivatedAt: prev.lastReactivatedAt || null,
+    reactivationCount: num(prev.reactivationCount)
   };
 
   return { review, previousNextReviewDate, newNextReviewDate };

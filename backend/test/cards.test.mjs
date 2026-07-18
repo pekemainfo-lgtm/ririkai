@@ -14,7 +14,9 @@ import {
   applyReview,
   isReviewResult,
   sanitizeStudyMode,
-  sortSupplementByMode
+  sortSupplementByMode,
+  supplementLineMode,
+  realignSupplementModes
 } from "../lib/cards.mjs";
 
 test("normalizeQuestion: 表記ゆれ（空白・句読点・大小）を吸収する", () => {
@@ -368,6 +370,65 @@ test("integrateAnswer(needs_review): pendingAnswerにmodeを退避", () => {
   );
   assert.equal(result, "needs_review");
   assert.equal(card.pendingAnswer.mode, "practice");
+});
+
+// --- Phase 9 追補: 監査対応（補足対応の堅牢化・legacy扱い・復帰履歴・競合候補保持） ---
+
+test("supplementLineMode: 不明な由来は input と断定せず legacy", () => {
+  assert.equal(supplementLineMode("input"), "input");
+  assert.equal(supplementLineMode("fast"), "fast");
+  assert.equal(supplementLineMode(""), "legacy");
+  assert.equal(supplementLineMode(undefined), "legacy");
+  assert.equal(supplementLineMode("bogus"), "legacy");
+});
+
+test("mergeCardData: 旧カード(モード欠落)の補足は legacy になり input と断定しない", () => {
+  const target = { ...existingDefinition, supplement: ["旧補足"], supplementModes: undefined };
+  const source = { ...existingDefinition, cardId: "card_legacy", supplement: ["新補足"], supplementModes: ["fast"], review: {} };
+  const { target: t } = mergeCardData(target, source, "2026-07-19T00:00:00.000Z");
+  assert.deepEqual(t.supplement, ["旧補足", "新補足"]);
+  assert.deepEqual(t.supplementModes, ["legacy", "fast"]);
+  // 表示順では legacy は末尾、fast が先頭
+  assert.deepEqual(sortSupplementByMode(t.supplement, t.supplementModes), ["新補足", "旧補足"]);
+});
+
+test("realignSupplementModes: 手動編集後も長さ・順序を揃え、未知行は legacy", () => {
+  const oldSup = ["A", "B", "C"];
+  const oldModes = ["fast", "input", "practice"];
+  // Bを削除し、Dを追加、順序変更
+  const newSup = ["C", "A", "D"];
+  assert.deepEqual(realignSupplementModes(newSup, oldSup, oldModes), ["practice", "fast", "legacy"]);
+  // モード配列欠落の旧カードでも壊れない
+  assert.deepEqual(realignSupplementModes(["A"], ["A"], undefined), ["legacy"]);
+});
+
+test("applyReview: mastered で masteredAt 記録・reactivation履歴は保持", () => {
+  const card = { review: { reviewCount: 1, masteryLevel: 1, lastReactivatedAt: "2026-07-10T00:00:00.000Z", reactivationCount: 2 } };
+  const { review } = applyReview(card, "mastered", "2026-07-19T00:00:00.000Z");
+  assert.equal(review.masteredAt, "2026-07-19T00:00:00.000Z");
+  assert.equal(review.lastReactivatedAt, "2026-07-10T00:00:00.000Z"); // 保持
+  assert.equal(review.reactivationCount, 2); // 保持
+});
+
+test("applyReview: mastered以外は既存 masteredAt を保持しつつ上書きしない", () => {
+  const card = { review: { masteredAt: "2026-07-01T00:00:00.000Z", masteryLevel: 3 } };
+  const { review } = applyReview(card, "again", "2026-07-19T00:00:00.000Z");
+  assert.equal(review.masteredAt, "2026-07-01T00:00:00.000Z");
+});
+
+test("integrateAnswer(needs_review): 既存の未解決候補を上書きせず pendingAnswers に蓄積", () => {
+  const first = integrateAnswer(existingDefinition, "矛盾する答えその1", [], "session_g", "2026-07-19T00:00:00.000Z", "practice");
+  assert.equal(first.result, "needs_review");
+  assert.equal(first.card.pendingAnswers.length, 1);
+
+  // 1つ目の候補を持ったカードに、別の矛盾候補が来る
+  const second = integrateAnswer(first.card, "矛盾する答えその2", [], "session_h", "2026-07-19T00:01:00.000Z", "fast");
+  assert.equal(second.card.pendingAnswers.length, 2); // 1つ目が消えていない
+  assert.equal(second.card.pendingAnswer.canonicalAnswer, "矛盾する答えその2"); // 最新は後方互換で pendingAnswer
+
+  // 同一候補（正規化一致）の再来は重複追加しない
+  const dup = integrateAnswer(second.card, "矛盾する答えその2", [], "session_i", "2026-07-19T00:02:00.000Z", "fast");
+  assert.equal(dup.card.pendingAnswers.length, 2);
 });
 
 test("mergeCardData: supplementとsupplementModesの整列を保つ", () => {

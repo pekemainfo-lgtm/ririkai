@@ -15,7 +15,8 @@ import {
   isReviewResult,
   applyReview,
   sanitizeStudyMode,
-  sortSupplementByMode
+  sortSupplementByMode,
+  realignSupplementModes
 } from "./lib/cards.mjs";
 import { sessionMarkdownKey, putSessionMarkdown, getSessionMarkdownUrl, getSessionMarkdownContent, createNoteUploadUrl, getNoteImageViewUrl, DATA_BUCKET } from "./lib/storage.mjs";
 import { replaceNoteImagesInFrontMatter } from "./lib/markdown.mjs";
@@ -551,9 +552,11 @@ async function resolveConflict(body) {
     canonicalAnswer,
     normalizedQuestion: card.normalizedQuestion || normalizeQuestion(card.question),
     supplement,
+    supplementModes: realignSupplementModes(supplement, card.supplement, card.supplementModes),
     status: "active",
     answerSource: "user",
     pendingAnswer: null,
+    pendingAnswers: [],
     updatedAt: new Date().toISOString()
   };
 
@@ -681,13 +684,17 @@ async function reactivateCard(body) {
 
   const now = new Date().toISOString();
   const today = toJstDate(now);
+  const prevReview = card.review || {};
   const updated = {
     ...card,
     status: "active",
     review: {
-      ...(card.review || {}),
+      ...prevReview,
       mastered: false,
-      nextReviewDate: today
+      nextReviewDate: today,
+      // masteredAt は「いつ理解したと判断したか」の履歴として残す（消さない）。
+      lastReactivatedAt: now,
+      reactivationCount: Number(prevReview.reactivationCount || 0) + 1
     },
     updatedAt: now
   };
@@ -731,14 +738,18 @@ async function updateCard(body) {
     return jsonResponse(400, { status: "error", errorCode: validation.errorCode, message: validation.message });
   }
 
+  const newSupplement = Array.isArray(body.supplement)
+    ? body.supplement.map((s) => String(s || "").trim()).filter(Boolean).slice(0, 8)
+    : card.supplement;
+
   const updated = {
     ...card,
     question,
     normalizedQuestion: normalizeQuestion(question),
     canonicalAnswer,
-    supplement: Array.isArray(body.supplement)
-      ? body.supplement.map((s) => String(s || "").trim()).filter(Boolean).slice(0, 8)
-      : card.supplement,
+    supplement: newSupplement,
+    // supplement を差し替えたら supplementModes も長さ・順序を揃え直す（対応崩れ防止）。
+    supplementModes: realignSupplementModes(newSupplement, card.supplement, card.supplementModes),
     qualification: body.qualification !== undefined ? String(body.qualification).trim() : card.qualification,
     subject: body.subject !== undefined ? String(body.subject).trim() : card.subject,
     cardType: body.cardType !== undefined ? sanitizeCardType(body.cardType) : card.cardType,
