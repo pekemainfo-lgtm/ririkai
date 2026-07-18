@@ -1,4 +1,5 @@
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
+import { normalizeCardCandidates } from "./cards.mjs";
 
 const REGION = "ap-northeast-1";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1";
@@ -175,7 +176,9 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function callOpenAIOnce(apiKey, prompt) {
+// OpenAI Responses APIにJSON応答を要求し、パース済みオブジェクトを返す低レベル関数。
+// 分析・カード生成の両方から使う。
+async function requestOpenAIJson(apiKey, systemContent, prompt) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
 
@@ -190,14 +193,8 @@ async function callOpenAIOnce(apiKey, prompt) {
       body: JSON.stringify({
         model: OPENAI_MODEL,
         input: [
-          {
-            role: "system",
-            content: "あなたは学習内容をJSONに整理する専門AIです。必ずJSONだけを返してください。"
-          },
-          {
-            role: "user",
-            content: prompt
-          }
+          { role: "system", content: systemContent },
+          { role: "user", content: prompt }
         ],
         text: {
           format: { type: "json_object" }
@@ -219,15 +216,12 @@ async function callOpenAIOnce(apiKey, prompt) {
     const outputText = extractResponseText(data);
     const jsonText = extractJsonText(outputText);
 
-    let parsed;
     try {
-      parsed = JSON.parse(jsonText);
+      return JSON.parse(jsonText);
     } catch (e) {
       e.errorCode = "AI_INVALID_JSON";
       throw e;
     }
-
-    return normalizeAnalysis(parsed);
   } catch (error) {
     if (error?.name === "AbortError") {
       const e = new Error("OpenAI request timed out");
@@ -238,6 +232,15 @@ async function callOpenAIOnce(apiKey, prompt) {
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+async function callOpenAIOnce(apiKey, prompt) {
+  const parsed = await requestOpenAIJson(
+    apiKey,
+    "あなたは学習内容をJSONに整理する専門AIです。必ずJSONだけを返してください。",
+    prompt
+  );
+  return normalizeAnalysis(parsed);
 }
 
 export async function callOpenAIForAnalysis(input) {
@@ -265,5 +268,93 @@ export async function callOpenAIForAnalysis(input) {
   const e = new Error(lastError?.message || "AI retry failed");
   e.errorCode = lastError?.errorCode || "AI_RETRY_FAILED";
   e.statusCode = lastError?.statusCode;
+  throw e;
+}
+
+function buildCardsPrompt(input, analysis) {
+  const { subject = "", topic = "", qualification = "", notUnderstoodNote = "", transcript = "" } = input;
+  const a = analysis || {};
+
+  const context = [
+    `曖昧な点: ${(a.ambiguousPoints || []).join(" / ") || "なし"}`,
+    `誤解の可能性: ${(a.misconceptions || []).join(" / ") || "なし"}`,
+    `復習事項: ${(a.reviewItems || []).join(" / ") || "なし"}`,
+    `自分で分からなかった点: ${notUnderstoodNote || "なし"}`
+  ].join("\n");
+
+  return `
+あなたは資格試験の学習者向けに、復習用の一問一答カードを作るAIです。
+学習者の文字起こしとAI分析をもとに、JSONだけを返してください。
+
+最重要方針：
+- カードを大量に作らない。1セッションにつき3〜10枚以内
+- 復習価値のあるカードが3枚未満なら、無理に3枚作らない（少なくてよい）
+- 優先: 曖昧な点・誤解の可能性・分からなかった点・試験で重要な条件・前提になる用語
+- 学習者の誤りをそのまま正解にしない。canonicalAnswerは一般に正しい内容にする
+- JSON以外を絶対に出さない。Markdown・コードブロック・前置きは禁止
+
+各カードの作り方：
+- question: 短い一問一答の問い
+- canonicalAnswer: 短く、単独で意味が通じる正解（詳細条件は入れない）
+- supplement: 詳細条件・注意点を配列で分ける（0〜5個）
+- cardType: 次のいずれか
+  definition(定義) / difference(違い) / condition(条件) / procedure(手順) /
+  cause_effect(原因と結果) / component(構成要素) / example(具体例) /
+  misconception(誤解しやすい点) / comparison(比較)
+- conceptKey: 概念を識別する短いキー。"分野:用語" 形式（例 aws:nat-gateway, linux:inode）。
+  同じ用語でも問う知識が違えば別キーにしてよい（例 aws:nat-gateway-placement）
+- reason: そのカードを作る理由（短く）
+
+出力JSON形式（cardsが空でもよい）：
+{
+  "status": "ok",
+  "cards": [
+    {
+      "cardType": "definition",
+      "conceptKey": "aws:nat-gateway",
+      "question": "NAT Gatewayとは？",
+      "canonicalAnswer": "プライベートサブネットのリソースが外部からの着信を受けずに外向き通信するためのマネージドサービス。",
+      "supplement": ["パブリックサブネットに配置する", "Elastic IPを関連付ける"],
+      "reason": "定義が曖昧だったため"
+    }
+  ]
+}
+
+資格・コース: ${qualification || "未指定"}
+分野: ${subject}
+テーマ: ${topic || "未指定"}
+
+AI分析の要点：
+${context}
+
+文字起こし：
+${transcript}
+`;
+}
+
+// カード候補を生成する。学習材料が乏しい場合は cards:[] を返す。
+export async function callOpenAIForCards(input, analysis) {
+  const apiKey = await getOpenAIApiKey();
+  const prompt = buildCardsPrompt(input, analysis);
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= MAX_OPENAI_ATTEMPTS; attempt++) {
+    try {
+      const parsed = await requestOpenAIJson(
+        apiKey,
+        "あなたは学習カードをJSONで作る専門AIです。必ずJSONだけを返してください。",
+        prompt
+      );
+      return { status: "ok", cards: normalizeCardCandidates(parsed?.cards) };
+    } catch (error) {
+      lastError = error;
+      if (attempt < MAX_OPENAI_ATTEMPTS) {
+        await sleep(800 * attempt);
+      }
+    }
+  }
+
+  const e = new Error(lastError?.message || "card generation failed");
+  e.errorCode = lastError?.errorCode || "CARD_GEN_FAILED";
   throw e;
 }

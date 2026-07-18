@@ -76,11 +76,23 @@
   .result ul { margin-top: 4px; }
   details { margin-top: 16px; }
   #apiUrl { font-size: 0.8rem; }
+  .hint { font-size: 0.85rem; color: var(--muted); }
+  .card-cand { border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+  .card-cand.excluded { opacity: 0.5; }
+  .card-cand-head { display: flex; align-items: center; gap: 8px; }
+  .card-cand-head input[type="checkbox"] { width: auto; margin: 0; }
+  .card-cand-type { font-size: 0.7rem; background: var(--border); border-radius: 4px; padding: 1px 6px; }
+  .card-cand label { font-size: 0.8rem; margin-top: 6px; color: var(--muted); }
+  .card-cand input[type="text"], .card-cand textarea { font-size: 0.9rem; }
+  .card-cand .reason { font-size: 0.78rem; color: var(--muted); margin-top: 4px; }
 </style>
 </head>
 <body>
   <h1>ReRIKAI - 学習セッション</h1>
-  <div style="margin-bottom:12px;font-size:0.9rem;"><a href="calendar.html" style="color:var(--accent)">📅 カレンダーへ</a></div>
+  <div style="margin-bottom:12px;font-size:0.9rem;">
+    <a href="calendar.html" style="color:var(--accent)">📅 カレンダー</a>
+    ｜<a href="cards.html" style="color:var(--accent)">🗂 カード一覧</a>
+  </div>
 
   <details>
     <summary>API接続設定</summary>
@@ -124,6 +136,11 @@
       <textarea id="transcript" placeholder="ここにiPhoneの文字起こしや、学習中の独り言を貼ります。" required></textarea>
     </fieldset>
 
+    <label style="display:flex;align-items:center;gap:6px;">
+      <input type="checkbox" id="generateCards" checked style="width:auto;margin:0;">
+      復習カードを生成する
+    </label>
+
     <button type="submit" id="saveBtn">保存してAI分析を開始</button>
   </form>
 
@@ -149,6 +166,14 @@
     <ul id="reviewItems"></ul>
 
     <button type="button" id="viewMarkdownBtn">Markdownを表示</button>
+
+    <div id="cardCandidatesArea" hidden>
+      <h2>復習カード候補</h2>
+      <p class="hint" id="cardCandidatesHint"></p>
+      <div id="cardCandidates"></div>
+      <button type="button" id="adoptCardsBtn">選択したカードを保存</button>
+      <p class="status" id="adoptStatus"></p>
+    </div>
   </div>
 
 <script src="shared.js"></script>
@@ -159,6 +184,7 @@
   const $ = (id) => document.getElementById(id);
   let isSaving = false;
   let currentSessionSk = null;
+  let currentCandidates = [];
 
   function todayJst() {
     const now = new Date();
@@ -192,6 +218,8 @@
     renderList("misconceptions", session.misconceptions);
     renderList("confirmQuestions", session.confirmQuestions);
     renderList("reviewItems", session.reviewItems);
+    currentCandidates = session.cardCandidates || [];
+    renderCardCandidates(session);
   }
 
   async function pollSession(sessionSk) {
@@ -202,12 +230,19 @@
 
       const data = await callApi({ action: "getSession", sessionSk });
 
-      if (data.status === "ok" && data.sessionStatus === "completed") {
-        return data.session;
-      }
-
       if (data.status === "error") {
         throw new Error(data.message || "AI分析に失敗しました。");
+      }
+
+      if (data.status === "ok" && data.sessionStatus === "completed") {
+        const s = data.session;
+        // カード生成はセッション完了の後に走るので、pending の間は待つ。
+        if (s.generateCards && s.cardStatus === "pending") {
+          const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+          setStatus(`カード候補を生成中です。経過 ${elapsedSec}秒`, "");
+          continue;
+        }
+        return s;
       }
 
       const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
@@ -215,6 +250,117 @@
     }
 
     throw new Error("AI分析に時間がかかっています。しばらく待ってから再度確認してください。");
+  }
+
+  function renderCardCandidates(session) {
+    const area = $("cardCandidatesArea");
+    const container = $("cardCandidates");
+    container.innerHTML = "";
+    $("adoptStatus").textContent = "";
+
+    if (!session.generateCards) {
+      area.hidden = true;
+      return;
+    }
+
+    if (session.cardStatus === "failed") {
+      area.hidden = false;
+      $("cardCandidatesHint").textContent = "カード候補の生成に失敗しました。セッションは保存されています。";
+      $("adoptCardsBtn").hidden = true;
+      return;
+    }
+
+    const candidates = session.cardCandidates || [];
+    if (candidates.length === 0) {
+      area.hidden = false;
+      $("cardCandidatesHint").textContent = "今回のセッションからは復習カード候補が作られませんでした。";
+      $("adoptCardsBtn").hidden = true;
+      return;
+    }
+
+    area.hidden = false;
+    $("adoptCardsBtn").hidden = false;
+    $("cardCandidatesHint").textContent =
+      "採用するカードにチェックを入れてください（内容は編集できます）。不要なカードはチェックを外します。";
+
+    candidates.forEach((c, i) => {
+      const div = document.createElement("div");
+      div.className = "card-cand";
+      div.dataset.index = i;
+      div.innerHTML = `
+        <div class="card-cand-head">
+          <input type="checkbox" class="cand-check" checked>
+          <span class="card-cand-type">${escapeHtml(c.cardType || "definition")}</span>
+          <span style="font-size:0.7rem;color:var(--muted)">${escapeHtml(c.conceptKey || "")}</span>
+        </div>
+        <label>質問</label>
+        <input type="text" class="cand-question" value="${escapeHtml(c.question || "")}">
+        <label>答え（canonicalAnswer）</label>
+        <textarea class="cand-answer" style="min-height:56px;">${escapeHtml(c.canonicalAnswer || "")}</textarea>
+        <label>補足（1行に1つ）</label>
+        <textarea class="cand-supplement" style="min-height:44px;">${escapeHtml((c.supplement || []).join("\n"))}</textarea>
+        ${c.reason ? `<div class="reason">理由: ${escapeHtml(c.reason)}</div>` : ""}
+      `;
+      const check = div.querySelector(".cand-check");
+      check.addEventListener("change", () => {
+        div.classList.toggle("excluded", !check.checked);
+      });
+      container.appendChild(div);
+    });
+  }
+
+  async function adoptCards() {
+    if (!currentSessionSk) return;
+    const rows = Array.from(document.querySelectorAll("#cardCandidates .card-cand"));
+    const cards = [];
+
+    for (const row of rows) {
+      const checked = row.querySelector(".cand-check").checked;
+      if (!checked) continue;
+
+      const original = currentCandidates[Number(row.dataset.index)] || {};
+      const question = row.querySelector(".cand-question").value.trim();
+      const canonicalAnswer = row.querySelector(".cand-answer").value.trim();
+      const supplement = row.querySelector(".cand-supplement").value
+        .split("\n").map((s) => s.trim()).filter(Boolean);
+      if (!question || !canonicalAnswer) continue;
+
+      // 編集されていれば answerSource=user とする
+      const edited = question !== (original.question || "") ||
+        canonicalAnswer !== (original.canonicalAnswer || "") ||
+        supplement.join("\n") !== (original.supplement || []).join("\n");
+
+      cards.push({
+        question,
+        canonicalAnswer,
+        supplement,
+        cardType: original.cardType,
+        conceptKey: original.conceptKey,
+        answerSource: edited ? "user" : "ai"
+      });
+    }
+
+    if (cards.length === 0) {
+      $("adoptStatus").textContent = "採用するカードが選ばれていません。";
+      $("adoptStatus").className = "status error";
+      return;
+    }
+
+    $("adoptCardsBtn").disabled = true;
+    $("adoptStatus").textContent = "保存中です...";
+    $("adoptStatus").className = "status";
+
+    try {
+      const res = await callApi({ action: "adoptCards", sessionSk: currentSessionSk, cards });
+      $("adoptStatus").textContent = res.message || `${(res.cards || []).length}枚を保存しました。`;
+      $("adoptStatus").className = "status ok";
+      $("adoptCardsBtn").hidden = true;
+    } catch (error) {
+      $("adoptStatus").textContent = error.message || "カードの保存に失敗しました。";
+      $("adoptStatus").className = "status error";
+    } finally {
+      $("adoptCardsBtn").disabled = false;
+    }
   }
 
   $("sessionForm").addEventListener("submit", async (event) => {
@@ -230,7 +376,8 @@
       durationMinutes: Number($("durationMinutes").value || 25),
       purpose: $("purpose").value.trim(),
       notUnderstoodNote: $("notUnderstoodNote").value.trim(),
-      transcript: $("transcript").value.trim()
+      transcript: $("transcript").value.trim(),
+      generateCards: $("generateCards").checked
     };
 
     if (!payload.transcript) {
@@ -279,6 +426,8 @@
       setStatus(error.message || "Markdownの取得に失敗しました。", "error");
     }
   });
+
+  $("adoptCardsBtn").addEventListener("click", adoptCards);
 
   $("saveApiUrlBtn").addEventListener("click", () => {
     setApiUrl($("apiUrl").value);

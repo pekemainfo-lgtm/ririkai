@@ -3,7 +3,8 @@ import { putItem, getItem, queryByPrefix, USER_ID } from "./lib/dynamo.mjs";
 import { toJstDate } from "./lib/dates.mjs";
 import { validateCreateSessionInput } from "./lib/validate.mjs";
 import { buildSessionMarkdown } from "./lib/markdown.mjs";
-import { callOpenAIForAnalysis } from "./lib/openai.mjs";
+import { callOpenAIForAnalysis, callOpenAIForCards } from "./lib/openai.mjs";
+import { buildCardItem, validateCardInput, sanitizeCardType, normalizeQuestion } from "./lib/cards.mjs";
 import { sessionMarkdownKey, putSessionMarkdown, getSessionMarkdownUrl, DATA_BUCKET } from "./lib/storage.mjs";
 
 const REGION = "ap-northeast-1";
@@ -94,6 +95,7 @@ async function createSession(body) {
   const purpose = String(body.purpose || "").trim();
   const notUnderstoodNote = String(body.notUnderstoodNote || "").trim();
   const transcript = String(body.transcript || "").trim();
+  const generateCards = body.generateCards !== false;
 
   const sessionItem = {
     PK: `USER#${USER_ID}`,
@@ -117,6 +119,10 @@ async function createSession(body) {
     confirmQuestions: [],
     reviewItems: [],
     purposeJudgement: null,
+    generateCards,
+    cardStatus: generateCards ? "pending" : "skipped",
+    cardCandidates: [],
+    cardIds: [],
     createdAt: now,
     updatedAt: now
   };
@@ -133,7 +139,8 @@ async function createSession(body) {
       topic,
       purpose,
       notUnderstoodNote,
-      transcript
+      transcript,
+      generateCards
     },
     createdAt: now,
     expiresAt: Math.floor(Date.now() / 1000) + JOB_TTL_SECONDS
@@ -244,7 +251,7 @@ async function processSessionJob(body) {
 
     await putSessionMarkdown(markdownKey, markdown);
 
-    await putItem({
+    const completedSession = {
       ...session,
       sessionStatus: "completed",
       errorCode: null,
@@ -257,7 +264,32 @@ async function processSessionJob(body) {
       reviewItems: analysis.reviewItems,
       purposeJudgement: analysis.purposeJudgement,
       updatedAt: new Date().toISOString()
-    });
+    };
+
+    await putItem(completedSession);
+
+    // カード生成はセッション保存の後に行い、失敗してもセッションは成功のまま（§26）。
+    if (job.input.generateCards !== false) {
+      try {
+        const cardResult = await callOpenAIForCards(job.input, analysis);
+        await putItem({
+          ...completedSession,
+          cardStatus: "done",
+          cardCandidates: cardResult.cards,
+          cardError: null,
+          updatedAt: new Date().toISOString()
+        });
+      } catch (cardError) {
+        console.error("card generation failed:", cardError);
+        await putItem({
+          ...completedSession,
+          cardStatus: "failed",
+          cardCandidates: [],
+          cardError: cardError.errorCode || "CARD_GEN_FAILED",
+          updatedAt: new Date().toISOString()
+        });
+      }
+    }
 
     return jsonResponse(200, { status: "ok", sessionSk });
   } catch (error) {
@@ -321,6 +353,134 @@ async function listSessions(body) {
   });
 }
 
+// カード候補を採用してCARD#アイテムを作成する。
+// body: { sessionSk, cards: [{question, canonicalAnswer, supplement[], cardType, conceptKey,
+//         qualification, subject, answerSource}] }
+async function adoptCards(body) {
+  const sessionSk = String(body.sessionSk || "").trim();
+  const cards = Array.isArray(body.cards) ? body.cards : [];
+
+  if (!sessionSk) {
+    return jsonResponse(400, { status: "error", errorCode: "NO_SESSION_SK", message: "sessionSk is required" });
+  }
+
+  const session = await getItem(sessionSk);
+  if (!session) {
+    return jsonResponse(404, { status: "error", errorCode: "SESSION_NOT_FOUND", message: "session not found" });
+  }
+
+  if (cards.length === 0) {
+    return jsonResponse(400, { status: "error", errorCode: "NO_CARDS", message: "採用するカードがありません。" });
+  }
+
+  const created = [];
+  const now = new Date().toISOString();
+
+  for (const card of cards) {
+    const validation = validateCardInput(card);
+    if (!validation.ok) continue;
+
+    const cardId = createId("card");
+    const item = buildCardItem({
+      userId: USER_ID,
+      cardId,
+      qualification: card.qualification || session.qualification,
+      subject: card.subject || session.subject,
+      cardType: card.cardType,
+      conceptKey: card.conceptKey,
+      question: card.question,
+      canonicalAnswer: card.canonicalAnswer,
+      supplement: card.supplement,
+      sourceSessionId: session.sessionId,
+      answerSource: card.answerSource === "user" ? "user" : "ai",
+      now
+    });
+
+    await putItem(item);
+    created.push(item);
+  }
+
+  if (created.length === 0) {
+    return jsonResponse(400, { status: "error", errorCode: "NO_VALID_CARDS", message: "有効なカードがありませんでした。" });
+  }
+
+  const newCardIds = created.map((c) => c.cardId);
+  await putItem({
+    ...session,
+    cardIds: [...(session.cardIds || []), ...newCardIds],
+    updatedAt: now
+  });
+
+  return jsonResponse(200, {
+    status: "ok",
+    message: `${created.length}枚のカードを保存しました。`,
+    cards: created
+  });
+}
+
+async function listCards(body) {
+  const limit = Math.min(Math.max(Number(body.limit || 300), 1), 500);
+  const items = await queryByPrefix("CARD#", { limit, scanIndexForward: false });
+  const cards = items.filter((c) => c.status !== "merged");
+
+  return jsonResponse(200, { status: "ok", cards });
+}
+
+async function getCard(body) {
+  const cardId = String(body.cardId || "").trim();
+  if (!cardId) {
+    return jsonResponse(400, { status: "error", errorCode: "NO_CARD_ID", message: "cardId is required" });
+  }
+
+  const card = await getItem(`CARD#${cardId}`);
+  if (!card) {
+    return jsonResponse(404, { status: "error", errorCode: "CARD_NOT_FOUND", message: "card not found" });
+  }
+
+  return jsonResponse(200, { status: "ok", card });
+}
+
+// カードを手動編集する。編集済みは answerSource=user とし、AIが自動上書きしないようにする（§14）。
+async function updateCard(body) {
+  const cardId = String(body.cardId || "").trim();
+  if (!cardId) {
+    return jsonResponse(400, { status: "error", errorCode: "NO_CARD_ID", message: "cardId is required" });
+  }
+
+  const card = await getItem(`CARD#${cardId}`);
+  if (!card) {
+    return jsonResponse(404, { status: "error", errorCode: "CARD_NOT_FOUND", message: "card not found" });
+  }
+
+  const question = body.question !== undefined ? String(body.question).trim() : card.question;
+  const canonicalAnswer = body.canonicalAnswer !== undefined ? String(body.canonicalAnswer).trim() : card.canonicalAnswer;
+
+  const validation = validateCardInput({ question, canonicalAnswer });
+  if (!validation.ok) {
+    return jsonResponse(400, { status: "error", errorCode: validation.errorCode, message: validation.message });
+  }
+
+  const updated = {
+    ...card,
+    question,
+    normalizedQuestion: normalizeQuestion(question),
+    canonicalAnswer,
+    supplement: Array.isArray(body.supplement)
+      ? body.supplement.map((s) => String(s || "").trim()).filter(Boolean).slice(0, 8)
+      : card.supplement,
+    qualification: body.qualification !== undefined ? String(body.qualification).trim() : card.qualification,
+    subject: body.subject !== undefined ? String(body.subject).trim() : card.subject,
+    cardType: body.cardType !== undefined ? sanitizeCardType(body.cardType) : card.cardType,
+    status: body.status === "inactive" || body.status === "active" ? body.status : card.status,
+    answerSource: "user",
+    updatedAt: new Date().toISOString()
+  };
+
+  await putItem(updated);
+
+  return jsonResponse(200, { status: "ok", card: updated });
+}
+
 async function getSessionMarkdown(body) {
   const sessionSk = String(body.sessionSk || "").trim();
 
@@ -370,6 +530,22 @@ export const handler = async (event) => {
 
     if (action === "listSessions") {
       return await listSessions(body);
+    }
+
+    if (action === "adoptCards") {
+      return await adoptCards(body);
+    }
+
+    if (action === "listCards") {
+      return await listCards(body);
+    }
+
+    if (action === "getCard") {
+      return await getCard(body);
+    }
+
+    if (action === "updateCard") {
+      return await updateCard(body);
     }
 
     if (action === "getSessionMarkdown") {

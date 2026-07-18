@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReRIKAI - カード一覧</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --fg: #1a1a1a; --bg: #ffffff; --border: #d0d0d0; --accent: #2563eb;
+    --muted: #666; --error: #c0392b; --ok: #1e7e34; --cell-bg: #f7f7f8; --badge-bg: #dbe4ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #eaeaea; --bg: #121212; --border: #444; --accent: #60a5fa;
+      --muted: #aaa; --error: #ff6b6b; --ok: #4ade80; --cell-bg: #1c1c1e; --badge-bg: #2a3a5c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    max-width: 720px; margin: 0 auto; padding: 16px; color: var(--fg); background: var(--bg); line-height: 1.5;
+  }
+  h1 { font-size: 1.3rem; }
+  a { color: var(--accent); }
+  .topnav { margin-bottom: 12px; font-size: 0.9rem; }
+  .status { margin-top: 12px; white-space: pre-wrap; font-size: 0.9rem; color: var(--muted); }
+  .status.error { color: var(--error); }
+  .status.ok { color: var(--ok); }
+  .backlink { cursor: pointer; color: var(--accent); font-size: 0.9rem; display: inline-block; margin-bottom: 10px; }
+  .card-row {
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 8px; cursor: pointer;
+  }
+  .card-row:hover { border-color: var(--accent); }
+  .card-row h3 { margin: 0 0 4px; font-size: 0.98rem; }
+  .card-meta { font-size: 0.76rem; color: var(--muted); }
+  .badge { display:inline-block; font-size: 0.68rem; background: var(--badge-bg); border-radius: 4px; padding: 1px 6px; margin-right: 4px; }
+  label { display:block; font-size: 0.82rem; margin-top: 10px; color: var(--muted); }
+  input[type="text"], textarea, select {
+    width: 100%; padding: 8px; margin-top: 4px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--fg); font-size: 0.95rem;
+  }
+  textarea { min-height: 60px; resize: vertical; }
+  button {
+    margin-top: 12px; padding: 8px 16px; border: none; border-radius: 6px;
+    background: var(--accent); color: #fff; font-size: 0.95rem; cursor: pointer;
+  }
+  button.secondary { background: var(--border); color: var(--fg); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  details.apibox { margin-bottom: 12px; }
+  #apiUrl { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font-size: 0.8rem; margin-top: 4px; }
+  [hidden] { display: none !important; }
+  .detail dt { font-size: 0.8rem; color: var(--muted); margin-top: 10px; }
+  .detail dd { margin: 2px 0 0; }
+</style>
+</head>
+<body>
+  <h1>ReRIKAI - カード一覧</h1>
+  <div class="topnav">
+    <a href="calendar.html">📅 カレンダー</a>
+    ｜<a href="session.html">＋ 新規セッション</a>
+  </div>
+
+  <details class="apibox">
+    <summary>API接続設定</summary>
+    <label for="apiUrl">API URL</label>
+    <input type="text" id="apiUrl" placeholder="https://xxxx.execute-api.ap-northeast-1.amazonaws.com/api">
+    <button type="button" id="saveApiUrlBtn">保存</button>
+  </details>
+
+  <div class="status" id="status"></div>
+
+  <!-- 一覧 -->
+  <div id="listView">
+    <div id="cardList"></div>
+  </div>
+
+  <!-- 詳細 -->
+  <div id="detailView" hidden>
+    <span class="backlink" id="detailBack">‹ 一覧へ戻る</span>
+    <dl class="detail" id="cardDetail"></dl>
+    <button type="button" id="editBtn">編集する</button>
+  </div>
+
+  <!-- 編集 -->
+  <div id="editView" hidden>
+    <span class="backlink" id="editBack">‹ 詳細へ戻る</span>
+    <label for="editQuestion">質問</label>
+    <input type="text" id="editQuestion">
+    <label for="editAnswer">答え（canonicalAnswer）</label>
+    <textarea id="editAnswer"></textarea>
+    <label for="editSupplement">補足（1行に1つ）</label>
+    <textarea id="editSupplement"></textarea>
+    <label for="editQualification">資格・コース</label>
+    <input type="text" id="editQualification">
+    <label for="editSubject">分野</label>
+    <input type="text" id="editSubject">
+    <label for="editCardType">カード種別</label>
+    <select id="editCardType">
+      <option value="definition">definition（定義）</option>
+      <option value="difference">difference（違い）</option>
+      <option value="condition">condition（条件）</option>
+      <option value="procedure">procedure（手順）</option>
+      <option value="cause_effect">cause_effect（原因と結果）</option>
+      <option value="component">component（構成要素）</option>
+      <option value="example">example（具体例）</option>
+      <option value="misconception">misconception（誤解しやすい点）</option>
+      <option value="comparison">comparison（比較）</option>
+    </select>
+    <label for="editStatus">状態</label>
+    <select id="editStatus">
+      <option value="active">有効</option>
+      <option value="inactive">無効</option>
+    </select>
+    <button type="button" id="saveEditBtn">保存</button>
+    <p class="status" id="editStatusMsg"></p>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  let currentCard = null;
+
+  function setStatus(message, type = "") {
+    $("status").textContent = message;
+    $("status").className = "status" + (type ? " " + type : "");
+  }
+
+  function showView(name) {
+    $("listView").hidden = name !== "list";
+    $("detailView").hidden = name !== "detail";
+    $("editView").hidden = name !== "edit";
+  }
+
+  async function loadCards() {
+    setStatus("読み込み中です...", "");
+    try {
+      const data = await callApi({ action: "listCards" });
+      const cards = data.cards || [];
+      const container = $("cardList");
+      container.innerHTML = "";
+
+      if (cards.length === 0) {
+        container.innerHTML = '<p style="color:var(--muted)">まだカードがありません。セッションを保存してカードを採用してください。</p>';
+        setStatus("", "");
+        return;
+      }
+
+      for (const card of cards) {
+        const div = document.createElement("div");
+        div.className = "card-row";
+        const nextReview = card.review?.nextReviewDate || "";
+        const inactive = card.status === "inactive" ? '<span class="badge">無効</span>' : "";
+        div.innerHTML = `
+          <h3>${escapeHtml(card.question || "(質問なし)")}</h3>
+          <div class="card-meta">
+            <span class="badge">${escapeHtml(card.cardType || "")}</span>
+            ${inactive}
+            ${escapeHtml(card.qualification || "")}｜${escapeHtml(card.subject || "")}
+            ${nextReview ? "｜次回復習 " + escapeHtml(nextReview) : ""}
+          </div>`;
+        div.addEventListener("click", () => openDetail(card.cardId));
+        container.appendChild(div);
+      }
+      setStatus("", "");
+    } catch (error) {
+      setStatus(error.message || "読み込みに失敗しました。", "error");
+    }
+  }
+
+  async function openDetail(cardId) {
+    setStatus("カードを読み込み中です...", "");
+    try {
+      const data = await callApi({ action: "getCard", cardId });
+      currentCard = data.card;
+      const c = currentCard;
+      const supplement = (c.supplement || []).length
+        ? "<ul>" + c.supplement.map((s) => `<li>${escapeHtml(s)}</li>`).join("") + "</ul>"
+        : "(なし)";
+
+      $("cardDetail").innerHTML = `
+        <dt>質問</dt><dd>${escapeHtml(c.question || "")}</dd>
+        <dt>答え（canonicalAnswer）</dt><dd>${escapeHtml(c.canonicalAnswer || "")}</dd>
+        <dt>補足</dt><dd>${supplement}</dd>
+        <dt>カード種別</dt><dd>${escapeHtml(c.cardType || "")}</dd>
+        <dt>conceptKey</dt><dd>${escapeHtml(c.conceptKey || "")}</dd>
+        <dt>資格・分野</dt><dd>${escapeHtml(c.qualification || "")}｜${escapeHtml(c.subject || "")}</dd>
+        <dt>答えの出所</dt><dd>${c.answerSource === "user" ? "ユーザー編集" : "AI生成"}</dd>
+        <dt>状態</dt><dd>${c.status === "inactive" ? "無効" : "有効"}</dd>
+        <dt>次回復習日</dt><dd>${escapeHtml(c.review?.nextReviewDate || "")}</dd>
+        <dt>出所セッション</dt><dd>${escapeHtml((c.sourceSessionIds || []).join(", ") || "(なし)")}</dd>
+      `;
+      setStatus("", "");
+      showView("detail");
+    } catch (error) {
+      setStatus(error.message || "カードの読み込みに失敗しました。", "error");
+    }
+  }
+
+  function openEdit() {
+    if (!currentCard) return;
+    const c = currentCard;
+    $("editQuestion").value = c.question || "";
+    $("editAnswer").value = c.canonicalAnswer || "";
+    $("editSupplement").value = (c.supplement || []).join("\n");
+    $("editQualification").value = c.qualification || "";
+    $("editSubject").value = c.subject || "";
+    $("editCardType").value = c.cardType || "definition";
+    $("editStatus").value = c.status === "inactive" ? "inactive" : "active";
+    $("editStatusMsg").textContent = "";
+    showView("edit");
+  }
+
+  async function saveEdit() {
+    if (!currentCard) return;
+    const payload = {
+      action: "updateCard",
+      cardId: currentCard.cardId,
+      question: $("editQuestion").value.trim(),
+      canonicalAnswer: $("editAnswer").value.trim(),
+      supplement: $("editSupplement").value.split("\n").map((s) => s.trim()).filter(Boolean),
+      qualification: $("editQualification").value.trim(),
+      subject: $("editSubject").value.trim(),
+      cardType: $("editCardType").value,
+      status: $("editStatus").value
+    };
+
+    if (!payload.question || !payload.canonicalAnswer) {
+      $("editStatusMsg").textContent = "質問と答えは必須です。";
+      $("editStatusMsg").className = "status error";
+      return;
+    }
+
+    $("saveEditBtn").disabled = true;
+    $("editStatusMsg").textContent = "保存中です...";
+    $("editStatusMsg").className = "status";
+
+    try {
+      const res = await callApi(payload);
+      currentCard = res.card;
+      $("editStatusMsg").textContent = "保存しました。";
+      $("editStatusMsg").className = "status ok";
+      await openDetail(currentCard.cardId);
+      await loadCards();
+    } catch (error) {
+      $("editStatusMsg").textContent = error.message || "保存に失敗しました。";
+      $("editStatusMsg").className = "status error";
+    } finally {
+      $("saveEditBtn").disabled = false;
+    }
+  }
+
+  $("detailBack").addEventListener("click", () => showView("list"));
+  $("editBack").addEventListener("click", () => showView("detail"));
+  $("editBtn").addEventListener("click", openEdit);
+  $("saveEditBtn").addEventListener("click", saveEdit);
+  $("saveApiUrlBtn").addEventListener("click", () => {
+    setApiUrl($("apiUrl").value);
+    setStatus("API URLを保存しました。再読み込みします。", "");
+    loadCards();
+  });
+
+  $("apiUrl").value = getApiUrl();
+  loadCards();
+</script>
+</body>
+</html>
