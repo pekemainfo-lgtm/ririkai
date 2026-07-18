@@ -16,7 +16,8 @@ import {
   applyReview,
   sanitizeStudyMode,
   sortSupplementByMode,
-  realignSupplementModes
+  realignSupplementModes,
+  queryCards
 } from "./lib/cards.mjs";
 import { sessionMarkdownKey, putSessionMarkdown, getSessionMarkdownUrl, getSessionMarkdownContent, createNoteUploadUrl, getNoteImageViewUrl, DATA_BUCKET } from "./lib/storage.mjs";
 import { replaceNoteImagesInFrontMatter } from "./lib/markdown.mjs";
@@ -447,12 +448,30 @@ async function adoptCards(body) {
   });
 }
 
+// カード一覧。フィルタ・並べ替え・ページングは「パラメータが指定された時だけ」効く。
+// 無指定なら従来どおり非merged全件を返す（カレンダー集計などの既存呼び出しと後方互換）。
+// body: { qualification?, subject?, q?, sort?("recentMastered"|default), limit?(1..50), offset? }
+// カード一覧。フィルタ・並べ替え・ページングは「パラメータが指定された時だけ」効く（純関数 queryCards）。
+// 無指定なら従来どおり非merged全件を返す（カレンダー集計などの既存呼び出しと後方互換）。
+// body: { qualification?, subject?, q?, sort?("recentMastered"|default), limit?(1..50), offset? }
 async function listCards(body) {
-  const limit = Math.min(Math.max(Number(body.limit || 300), 1), 500);
-  const items = await queryByPrefix("CARD#", { limit, scanIndexForward: false });
-  const cards = items.filter((c) => c.status !== "merged");
+  const items = await queryByPrefix("CARD#", { limit: 500, scanIndexForward: false });
+  const result = queryCards(items, {
+    qualification: body.qualification,
+    subject: body.subject,
+    q: body.q,
+    sort: body.sort,
+    limit: body.limit,
+    offset: body.offset
+  });
 
-  return jsonResponse(200, { status: "ok", cards });
+  const res = { status: "ok", cards: result.cards, total: result.total };
+  if (result.paged) {
+    res.offset = result.offset;
+    res.limit = result.limit;
+    res.hasMore = result.hasMore;
+  }
+  return jsonResponse(200, res);
 }
 
 // 候補カードに対して既存カードの重複を返す（採用前に§10.5の選択UIを出すため）。

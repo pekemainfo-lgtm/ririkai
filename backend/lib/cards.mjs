@@ -216,6 +216,53 @@ export function sortSupplementByMode(supplement, supplementModes) {
     .map((x) => x.text);
 }
 
+// カード一覧の絞り込み・並べ替え・ページング（純関数・テスト対象）。
+// merged は常に除外。limit 未指定なら全件（ページングなし・後方互換）。
+// opts: { qualification?, subject?, q?, sort?("recentMastered"|default=新しい順), limit?(1..50), offset? }
+export function queryCards(cards, opts = {}) {
+  const norm = (v) => String(v || "").trim().toLowerCase();
+  const qual = norm(opts.qualification);
+  const subj = norm(opts.subject);
+  const q = norm(opts.q);
+
+  let out = (Array.isArray(cards) ? cards : []).filter((c) => c && c.status !== "merged");
+  if (qual) out = out.filter((c) => norm(c.qualification).includes(qual));
+  if (subj) out = out.filter((c) => norm(c.subject).includes(subj));
+  if (q) {
+    // 生の質問/答えの部分一致に加え、表記ゆれ吸収済みの normalizedQuestion でも照合する。
+    const nq = normalizeQuestion(opts.q);
+    out = out.filter((c) =>
+      norm(c.question).includes(q) ||
+      norm(c.canonicalAnswer).includes(q) ||
+      String(c.normalizedQuestion || normalizeQuestion(c.question)).includes(nq)
+    );
+  }
+
+  out = out.slice();
+  if (String(opts.sort || "") === "recentMastered") {
+    // 最近 mastered にした順（masteredAt 降順・未設定は末尾）。
+    out.sort((a, b) => String(b.review?.masteredAt || "").localeCompare(String(a.review?.masteredAt || "")));
+  } else {
+    // 既定は新しい順（作成日時の降順）。
+    out.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  }
+
+  const total = out.length;
+  const hasPaging = opts.limit !== undefined && opts.limit !== null && opts.limit !== "";
+  if (!hasPaging) return { cards: out, total, paged: false };
+
+  const limit = Math.min(Math.max(Number(opts.limit) || 30, 1), 50);
+  const offset = Math.max(Number(opts.offset) || 0, 0);
+  return {
+    cards: out.slice(offset, offset + limit),
+    total,
+    offset,
+    limit,
+    hasMore: offset + limit < total,
+    paged: true
+  };
+}
+
 // 手動編集・矛盾解決で supplement を差し替える際、supplementModes を新しい配列と長さ・順序を揃えて作り直す。
 // 変更のない行は元のモードを保ち、新規/編集された行や由来不明の行は "legacy"（末尾表示）にする。
 export function realignSupplementModes(newSupplement, oldSupplement, oldSupplementModes) {

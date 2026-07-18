@@ -52,6 +52,15 @@
   [hidden] { display: none !important; }
   .detail dt { font-size: 0.8rem; color: var(--muted); margin-top: 10px; }
   .detail dd { margin: 2px 0 0; }
+  .filters { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+  .filter-row { display: flex; gap: 8px; }
+  .filter-row > * { flex: 1; margin-top: 8px; }
+  .filters input, .filters select { margin-top: 8px; }
+  .filter-actions { display: flex; gap: 8px; margin-top: 4px; }
+  .filter-actions button { flex: 1; }
+  .pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+  .pager button { margin-top: 0; }
+  .pager #pageInfo { font-size: 0.82rem; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -73,7 +82,38 @@
 
   <!-- 一覧 -->
   <div id="listView">
+    <div class="filters">
+      <div class="filter-row">
+        <input type="text" id="fQualification" placeholder="資格・コースで絞る" list="qualList" autocomplete="off">
+        <input type="text" id="fSubject" placeholder="分野で絞る" list="subjList" autocomplete="off">
+      </div>
+      <input type="text" id="fQuery" placeholder="質問文・答えで検索" autocomplete="off">
+      <div class="filter-row">
+        <select id="fSort">
+          <option value="">新しい順</option>
+          <option value="recentMastered">最近リリカイした順</option>
+        </select>
+        <select id="fLimit">
+          <option value="20">20件ずつ</option>
+          <option value="30" selected>30件ずつ</option>
+          <option value="50">50件ずつ</option>
+        </select>
+      </div>
+      <div class="filter-actions">
+        <button type="button" id="searchBtn">検索</button>
+        <button type="button" id="clearFilterBtn" class="secondary">クリア</button>
+      </div>
+      <datalist id="qualList"></datalist>
+      <datalist id="subjList"></datalist>
+    </div>
+
     <div id="cardList"></div>
+
+    <div class="pager" id="pager" hidden>
+      <button type="button" id="prevBtn" class="secondary">‹ 前へ</button>
+      <span id="pageInfo"></span>
+      <button type="button" id="nextBtn" class="secondary">次へ ›</button>
+    </div>
   </div>
 
   <!-- 詳細 -->
@@ -143,7 +183,8 @@
 <script>
   const $ = (id) => document.getElementById(id);
   let currentCard = null;
-  let allCards = [];
+  let allCards = [];        // 全カード（手動統合の候補・絞り込み候補の datalist に使う）
+  let offset = 0;           // 一覧のページ先頭位置
 
   function setStatus(message, type = "") {
     $("status").textContent = message;
@@ -156,17 +197,56 @@
     $("editView").hidden = name !== "edit";
   }
 
-  async function loadCards() {
-    setStatus("読み込み中です...", "");
+  function pageLimit() {
+    return Number($("fLimit").value) || 30;
+  }
+
+  // 全カードを取得して、手動統合の候補・資格/分野の入力候補(datalist)を用意する。
+  async function loadAll() {
     try {
       const data = await callApi({ action: "listCards" });
+      allCards = data.cards || [];
+      fillDatalist("qualList", allCards.map((c) => c.qualification));
+      fillDatalist("subjList", allCards.map((c) => c.subject));
+    } catch (error) {
+      // 候補が用意できなくても一覧表示は続行する。
+    }
+  }
+
+  function fillDatalist(id, values) {
+    const seen = [];
+    for (const v of values) {
+      const s = String(v || "").trim();
+      if (s && !seen.includes(s)) seen.push(s);
+    }
+    seen.sort((a, b) => a.localeCompare(b, "ja"));
+    $(id).innerHTML = seen.map((v) => `<option value="${escapeHtml(v)}"></option>`).join("");
+  }
+
+  // 絞り込み・並べ替え・ページングを効かせて一覧を読み込む。
+  async function loadList() {
+    setStatus("読み込み中です...", "");
+    try {
+      const limit = pageLimit();
+      const data = await callApi({
+        action: "listCards",
+        qualification: $("fQualification").value.trim(),
+        subject: $("fSubject").value.trim(),
+        q: $("fQuery").value.trim(),
+        sort: $("fSort").value,
+        limit,
+        offset
+      });
+
       const cards = data.cards || [];
-      allCards = cards;
+      const total = Number(data.total || cards.length);
       const container = $("cardList");
       container.innerHTML = "";
 
-      if (cards.length === 0) {
-        container.innerHTML = '<p style="color:var(--muted)">まだカードがありません。セッションを保存してカードを採用してください。</p>';
+      if (total === 0) {
+        const anyFilter = $("fQualification").value || $("fSubject").value || $("fQuery").value;
+        container.innerHTML = `<p style="color:var(--muted)">${anyFilter ? "条件に合うカードがありません。" : "まだカードがありません。セッションを保存してカードを採用してください。"}</p>`;
+        $("pager").hidden = true;
         setStatus("", "");
         return;
       }
@@ -178,21 +258,55 @@
         const inactive = card.status === "inactive" ? '<span class="badge">無効</span>' : "";
         const needsReview = card.status === "needs_review"
           ? '<span class="badge" style="background:var(--error);color:#fff">要確認</span>' : "";
+        const mastered = card.review?.mastered
+          ? '<span class="badge" style="background:var(--ok);color:#fff">リリカイ済み</span>' : "";
         div.innerHTML = `
           <h3>${escapeHtml(card.question || "(質問なし)")}</h3>
           <div class="card-meta">
             <span class="badge">${escapeHtml(card.cardType || "")}</span>
-            ${needsReview}${inactive}
+            ${needsReview}${inactive}${mastered}
             ${escapeHtml(card.qualification || "")}｜${escapeHtml(card.subject || "")}
             ${nextReview ? "｜次回復習 " + escapeHtml(nextReview) : ""}
           </div>`;
         div.addEventListener("click", () => openDetail(card.cardId));
         container.appendChild(div);
       }
+
+      renderPager(total);
       setStatus("", "");
     } catch (error) {
       setStatus(error.message || "読み込みに失敗しました。", "error");
     }
+  }
+
+  function renderPager(total) {
+    const limit = pageLimit();
+    const from = total === 0 ? 0 : offset + 1;
+    const to = Math.min(offset + limit, total);
+    $("pageInfo").textContent = `${from}〜${to} / ${total}件`;
+    $("prevBtn").disabled = offset <= 0;
+    $("nextBtn").disabled = offset + limit >= total;
+    $("pager").hidden = total <= limit && offset === 0;
+  }
+
+  // 一覧とメタ情報（統合候補・datalist）をまとめて再読み込みする。
+  async function refreshAll() {
+    await loadAll();
+    await loadList();
+  }
+
+  function applyFilters() {
+    offset = 0;
+    loadList();
+  }
+
+  function clearFilters() {
+    $("fQualification").value = "";
+    $("fSubject").value = "";
+    $("fQuery").value = "";
+    $("fSort").value = "";
+    offset = 0;
+    loadList();
   }
 
   async function openDetail(cardId) {
@@ -274,7 +388,7 @@
       $("editStatusMsg").textContent = "保存しました。";
       $("editStatusMsg").className = "status ok";
       await openDetail(currentCard.cardId);
-      await loadCards();
+      await refreshAll();
     } catch (error) {
       $("editStatusMsg").textContent = error.message || "保存に失敗しました。";
       $("editStatusMsg").className = "status error";
@@ -318,7 +432,7 @@
       });
       currentCard = res.card;
       await openDetail(currentCard.cardId);
-      await loadCards();
+      await refreshAll();
     } catch (error) {
       $("resolveMsg").textContent = error.message || "確定に失敗しました。";
       $("resolveMsg").className = "status error";
@@ -361,7 +475,7 @@
       });
       currentCard = res.card;
       await openDetail(currentCard.cardId);
-      await loadCards();
+      await refreshAll();
       $("mergeMsg").textContent = "統合しました。";
       $("mergeMsg").className = "status ok";
     } catch (error) {
@@ -383,11 +497,28 @@
   $("saveApiUrlBtn").addEventListener("click", () => {
     setApiUrl($("apiUrl").value);
     setStatus("API URLを保存しました。再読み込みします。", "");
-    loadCards();
+    refreshAll();
+  });
+
+  // 絞り込み・並べ替え・ページング
+  $("searchBtn").addEventListener("click", applyFilters);
+  $("clearFilterBtn").addEventListener("click", clearFilters);
+  $("fSort").addEventListener("change", applyFilters);
+  $("fLimit").addEventListener("change", applyFilters);
+  ["fQualification", "fSubject", "fQuery"].forEach((id) => {
+    $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") applyFilters(); });
+  });
+  $("prevBtn").addEventListener("click", () => {
+    offset = Math.max(offset - pageLimit(), 0);
+    loadList();
+  });
+  $("nextBtn").addEventListener("click", () => {
+    offset = offset + pageLimit();
+    loadList();
   });
 
   $("apiUrl").value = getApiUrl();
-  loadCards();
+  refreshAll();
 </script>
 </body>
 </html>

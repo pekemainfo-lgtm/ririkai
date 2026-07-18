@@ -16,7 +16,8 @@ import {
   sanitizeStudyMode,
   sortSupplementByMode,
   supplementLineMode,
-  realignSupplementModes
+  realignSupplementModes,
+  queryCards
 } from "../lib/cards.mjs";
 
 test("normalizeQuestion: 表記ゆれ（空白・句読点・大小）を吸収する", () => {
@@ -429,6 +430,60 @@ test("integrateAnswer(needs_review): 既存の未解決候補を上書きせず 
   // 同一候補（正規化一致）の再来は重複追加しない
   const dup = integrateAnswer(second.card, "矛盾する答えその2", [], "session_i", "2026-07-19T00:02:00.000Z", "fast");
   assert.equal(dup.card.pendingAnswers.length, 2);
+});
+
+// --- Phase 9 追補: カード検索・絞り込み・並べ替え・ページング（queryCards） ---
+
+const sampleCards = [
+  { cardId: "c1", status: "active", qualification: "AWS SOA-C03", subject: "Monitoring", question: "CloudWatchとは？", canonicalAnswer: "メトリクス監視", createdAt: "2026-07-10T00:00:00.000Z", review: { masteredAt: "2026-07-12T00:00:00.000Z" } },
+  { cardId: "c2", status: "active", qualification: "AWS SOA-C03", subject: "Networking", question: "NAT Gatewayとは？", canonicalAnswer: "外向き通信", createdAt: "2026-07-11T00:00:00.000Z", review: { masteredAt: "2026-07-15T00:00:00.000Z" } },
+  { cardId: "c3", status: "active", qualification: "情報処理安全確保支援士", subject: "暗号", question: "共通鍵とは？", canonicalAnswer: "同じ鍵", createdAt: "2026-07-12T00:00:00.000Z", review: {} },
+  { cardId: "c4", status: "merged", qualification: "AWS SOA-C03", subject: "Monitoring", question: "重複カード", canonicalAnswer: "x", createdAt: "2026-07-13T00:00:00.000Z", review: {} }
+];
+
+test("queryCards: 無指定なら非merged全件・新しい順・ページングなし", () => {
+  const r = queryCards(sampleCards, {});
+  assert.equal(r.paged, false);
+  assert.equal(r.total, 3); // merged 除外
+  assert.deepEqual(r.cards.map((c) => c.cardId), ["c3", "c2", "c1"]); // createdAt 降順
+});
+
+test("queryCards: 資格で絞る（部分一致・大小無視）", () => {
+  const r = queryCards(sampleCards, { qualification: "aws soa" });
+  assert.deepEqual(r.cards.map((c) => c.cardId).sort(), ["c1", "c2"]);
+});
+
+test("queryCards: 分野で絞る", () => {
+  const r = queryCards(sampleCards, { subject: "Networking" });
+  assert.deepEqual(r.cards.map((c) => c.cardId), ["c2"]);
+});
+
+test("queryCards: 質問文検索（質問・答え・normalizedQuestion）", () => {
+  assert.deepEqual(queryCards(sampleCards, { q: "nat gateway" }).cards.map((c) => c.cardId), ["c2"]);
+  assert.deepEqual(queryCards(sampleCards, { q: "メトリクス" }).cards.map((c) => c.cardId), ["c1"]); // 答えにヒット
+});
+
+test("queryCards: 最近masteredにした順（未設定は末尾）", () => {
+  const r = queryCards(sampleCards, { sort: "recentMastered" });
+  assert.deepEqual(r.cards.map((c) => c.cardId), ["c2", "c1", "c3"]); // 07-15, 07-12, なし
+});
+
+test("queryCards: limit/offset でページング", () => {
+  const p1 = queryCards(sampleCards, { limit: 2, offset: 0 });
+  assert.equal(p1.paged, true);
+  assert.equal(p1.total, 3);
+  assert.equal(p1.limit, 2);
+  assert.equal(p1.hasMore, true);
+  assert.deepEqual(p1.cards.map((c) => c.cardId), ["c3", "c2"]);
+
+  const p2 = queryCards(sampleCards, { limit: 2, offset: 2 });
+  assert.equal(p2.hasMore, false);
+  assert.deepEqual(p2.cards.map((c) => c.cardId), ["c1"]);
+});
+
+test("queryCards: limit は 1..50 にクランプ", () => {
+  assert.equal(queryCards(sampleCards, { limit: 999 }).limit, 50);
+  assert.equal(queryCards(sampleCards, { limit: 0 }).limit, 30); // 0→既定30
 });
 
 test("mergeCardData: supplementとsupplementModesの整列を保つ", () => {
