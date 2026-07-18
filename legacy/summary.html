@@ -1,0 +1,1314 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>まとめ・単元別 - Eureka Study</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --text: #18202a;
+      --muted: #657386;
+      --line: #d9e0ea;
+      --primary: #2563eb;
+      --primary-dark: #1d4ed8;
+      --danger: #dc2626;
+      --ok: #16a34a;
+      --warn: #f59e0b;
+      --soft: #eef4ff;
+      --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      --radius: 18px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans JP", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: rgba(255, 255, 255, 0.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .header-inner {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 16px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    h1 { margin: 0; font-size: 22px; line-height: 1.2; }
+    .sub-title { color: var(--muted); font-size: 13px; margin-top: 4px; }
+
+    .nav-link {
+      font-weight: 800;
+      color: var(--primary-dark);
+      text-decoration: none;
+      background: var(--soft);
+      border: 1px solid #c7d8ff;
+      border-radius: 999px;
+      padding: 9px 14px;
+      white-space: nowrap;
+    }
+
+    .container {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 22px 18px 60px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(300px, 0.9fr) minmax(0, 1.1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 20px;
+    }
+
+    .card + .card { margin-top: 18px; }
+
+    h2 { font-size: 18px; margin: 0 0 14px; }
+    h3 { font-size: 15px; margin: 18px 0 8px; }
+    h4 { font-size: 15px; margin: 0 0 8px; }
+
+    label {
+      display: block;
+      font-weight: 700;
+      margin: 12px 0 6px;
+      font-size: 14px;
+    }
+
+    input, select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 11px 12px;
+      font: inherit;
+      background: #fff;
+      color: var(--text);
+      outline: none;
+    }
+
+    input:focus, select:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 4px;
+    }
+
+    button {
+      border: none;
+      border-radius: 999px;
+      padding: 11px 16px;
+      font-weight: 800;
+      font: inherit;
+      cursor: pointer;
+      transition: 0.15s ease;
+    }
+
+    button.primary { background: var(--primary); color: white; }
+    button.primary:hover { background: var(--primary-dark); }
+
+    button.secondary {
+      background: var(--soft);
+      color: var(--primary-dark);
+      border: 1px solid #c7d8ff;
+    }
+    button.secondary:hover { background: #dfeaff; }
+
+    button.ghost { background: #f3f4f6; color: var(--text); }
+
+    button.warn {
+      background: #fff7ed;
+      color: #9a3412;
+      border: 1px solid #fed7aa;
+    }
+
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+    .status {
+      margin-top: 12px;
+      padding: 11px 12px;
+      border-radius: 12px;
+      background: #f8fafc;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 14px;
+      white-space: pre-wrap;
+    }
+
+    .status.ok { color: #166534; background: #ecfdf3; border-color: #bbf7d0; }
+    .status.error { color: #991b1b; background: #fef2f2; border-color: #fecaca; }
+
+    .result-empty {
+      color: var(--muted);
+      background: #f8fafc;
+      border: 1px dashed var(--line);
+      border-radius: 14px;
+      padding: 20px;
+      text-align: center;
+    }
+
+    .result-block {
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+      margin-top: 12px;
+    }
+
+    .list-card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      margin-top: 10px;
+      background: #fff;
+    }
+
+    .list-card button {
+      margin-top: 8px;
+      padding: 7px 11px;
+      font-size: 13px;
+    }
+
+    .meta { color: var(--muted); font-size: 13px; }
+
+    .chip {
+      display: inline-block;
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+      border-radius: 999px;
+      padding: 4px 9px;
+      font-size: 12px;
+      color: #475569;
+      margin-right: 6px;
+      margin-top: 6px;
+    }
+
+    .explanation-card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      margin-top: 10px;
+      background: #fbfdff;
+    }
+
+    .review-card {
+      border: 1px solid #c7d8ff;
+      border-radius: 14px;
+      padding: 14px;
+      margin-top: 10px;
+      background: #f8fbff;
+    }
+
+    .review-card-large {
+      border: 1px solid #c7d8ff;
+      border-radius: 18px;
+      padding: 18px;
+      margin-top: 12px;
+      background: #f8fbff;
+      min-height: 180px;
+      cursor: pointer;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .review-card-large.answer-side {
+      background: #fffdf5;
+      border-color: #fde68a;
+    }
+
+    .review-card-large.flip-anim {
+      animation: cardFlipIn 0.32s ease;
+    }
+
+    @keyframes cardFlipIn {
+      from { transform: rotateY(90deg); opacity: 0.35; }
+      to { transform: rotateY(0deg); opacity: 1; }
+    }
+
+    .flip-hint {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 14px;
+      text-align: center;
+    }
+
+    button.understood {
+      background: #16a34a;
+      color: #fff;
+      border: none;
+    }
+
+    button.understood:hover { background: #15803d; }
+
+    .understood-chip {
+      display: inline-block;
+      background: #ecfdf3;
+      color: #166534;
+      border: 1px solid #bbf7d0;
+      border-radius: 999px;
+      padding: 2px 10px;
+      font-size: 12px;
+      font-weight: 800;
+      margin-left: 8px;
+    }
+
+    .review-done {
+      text-align: center;
+      padding: 34px 16px;
+      font-size: 18px;
+      font-weight: 800;
+      color: #166534;
+    }
+
+    .review-question { font-size: 20px; font-weight: 800; margin: 10px 0 18px; }
+    .review-answer { font-size: 18px; font-weight: 700; color: #0f172a; }
+    .review-label { color: var(--primary-dark); font-weight: 900; margin: 0; }
+
+    .review-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+
+    details.plain {
+      margin-top: 12px;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: #fff;
+    }
+
+    summary { cursor: pointer; font-weight: 800; color: var(--primary-dark); }
+
+    pre {
+      overflow: auto;
+      max-height: 360px;
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 14px;
+      border-radius: 14px;
+      font-size: 12px;
+    }
+
+    .small-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+    .api-box {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: end;
+    }
+
+    ul { padding-left: 20px; }
+
+    /* 単元ツリー */
+    details.tree-exam {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 10px 14px;
+      margin-top: 10px;
+      background: #fff;
+    }
+
+    details.tree-subject {
+      border: 1px solid #e8edf5;
+      border-radius: 12px;
+      padding: 8px 12px;
+      margin: 8px 0 8px 8px;
+      background: #fbfdff;
+    }
+
+    .unit-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border: 1px solid #e8edf5;
+      border-radius: 12px;
+      padding: 8px 12px;
+      margin: 8px 0 8px 16px;
+      background: #fff;
+      cursor: pointer;
+      transition: 0.15s ease;
+    }
+
+    .unit-row:hover { background: var(--soft); border-color: #c7d8ff; }
+    .unit-row.active { background: var(--soft); border-color: var(--primary); }
+
+    .unit-name { font-weight: 700; }
+    .unit-meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
+
+    /* 添付画像 */
+    .attachment-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .attachment-grid a {
+      display: block;
+      width: 160px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      background: #f1f5f9;
+    }
+
+    .attachment-grid img {
+      width: 100%;
+      height: 120px;
+      object-fit: cover;
+      display: block;
+    }
+
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+      .header-inner { align-items: flex-start; flex-direction: column; }
+      .api-box { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <div class="header-inner">
+      <div>
+        <h1>まとめ・単元別</h1>
+        <div class="sub-title">単元別に過去ログを見る → 詳細と写真を確認 → 復習カードを回す</div>
+      </div>
+      <a class="nav-link" href="input.html">← 入力ページ</a>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <details>
+        <summary>API設定(通常は触らない)</summary>
+        <div class="api-box" style="margin-top: 10px;">
+          <div>
+            <label for="apiUrl">API Gateway URL</label>
+            <input id="apiUrl" value="https://xt65dgklb3.execute-api.ap-northeast-1.amazonaws.com/api" />
+          </div>
+          <button class="secondary" id="saveApiUrlBtn" type="button">URL保存</button>
+        </div>
+        <div class="small-note">入力ページと共有されます。</div>
+      </details>
+
+      <div class="actions" style="margin-top: 14px;">
+        <button class="primary" id="reloadBtn" type="button">再読み込み</button>
+        <button class="secondary" id="timelineBtn" type="button">時系列一覧</button>
+        <button class="secondary" id="weakBtn" type="button">弱点一覧</button>
+      </div>
+      <div id="status" class="status">読み込み中です。</div>
+    </section>
+
+    <div class="grid">
+      <div>
+        <section class="card">
+          <h2>単元別</h2>
+          <div id="treeOutput" class="result-empty">読み込み中です。</div>
+        </section>
+
+        <section class="card">
+          <h2>復習カード</h2>
+          <div class="actions">
+            <select id="reviewSubject" style="max-width: 200px;"><option value="">科目: すべて</option></select>
+            <select id="reviewUnit" style="max-width: 200px;"><option value="">単元: すべて</option></select>
+            <button class="warn" id="startReviewBtn" type="button">復習開始</button>
+            <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer;">
+              <input type="checkbox" id="includeUnderstood"> 理解済みも含める
+            </label>
+          </div>
+          <div id="reviewArea" class="result-empty" style="margin-top: 12px;">科目・単元を選んで「復習開始」を押してください。</div>
+        </section>
+      </div>
+
+      <div>
+        <section class="card">
+          <h2 id="listTitle">セッション一覧</h2>
+          <div id="listOutput" class="result-empty">左の単元をクリックすると、その単元の過去ログが時系列で出ます。</div>
+        </section>
+
+        <section class="card">
+          <h2>セッション詳細</h2>
+          <div id="detailOutput" class="result-empty">一覧の「詳細を見る」を押すと、ここに全文と写真が表示されます。</div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <script>
+  const DEFAULT_API_URL = "https://xt65dgklb3.execute-api.ap-northeast-1.amazonaws.com/api";
+  const API_URL_STORAGE_KEY = "eurekaStudyApiUrl";
+
+  const LIST_LIMIT = 500;          // 単元ツリー用(軽量データ)
+  const REVIEW_SESSION_LIMIT = 100; // 復習カード用(全文データ)
+  const FETCH_TIMEOUT_MS = 45000;
+
+  let lightSessions = [];
+  let activeUnitKey = "";
+
+  const $ = (id) => document.getElementById(id);
+
+  function getApiUrl() {
+    return ($("apiUrl").value || DEFAULT_API_URL).trim();
+  }
+
+  function setStatus(message, type = "") {
+    const el = $("status");
+    el.textContent = message;
+    el.className = "status" + (type ? " " + type : "");
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function unwrapLambdaResponse(data) {
+    if (data && typeof data.body === "string") {
+      try {
+        return JSON.parse(data.body);
+      } catch {
+        return data;
+      }
+    }
+    return data;
+  }
+
+  async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error("API通信がタイムアウトしました。ネットワーク、API Gateway、Lambdaログを確認してください。");
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  async function callApi(payload) {
+    const response = await fetchWithTimeout(getApiUrl(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/plain;charset=UTF-8"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const text = await response.text();
+    let data;
+
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch (error) {
+      throw new Error("APIの返答をJSONとして読めませんでした: " + text.slice(0, 300));
+    }
+
+    data = unwrapLambdaResponse(data);
+
+    if (!response.ok) {
+      throw new Error(data.message || data.error || "API error: " + response.status);
+    }
+
+    if (data.status === "error") {
+      throw new Error(data.message || data.error || "API error");
+    }
+
+    return data;
+  }
+
+  // Lambda側 sanitizeKey と同じロジック。
+  // 旧データには unitNormalized が無いため、フロントでも同じ正規化をフォールバックとして持つ。
+  function normalizeKey(value) {
+    return String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^\w\-ぁ-んァ-ヶ一-龠ー]/g, "")
+      .slice(0, 80);
+  }
+
+  function sessionExam(s) {
+    return s.exam && s.exam !== "未設定" ? s.exam : (s.subject || "未設定");
+  }
+
+  function sessionUnitKey(s) {
+    return s.unitNormalized || normalizeKey(s.unit) || "未設定";
+  }
+
+  function toArray(value) {
+    if (Array.isArray(value)) return value;
+    if (value === undefined || value === null || value === "") return [];
+    return [value];
+  }
+
+  function getStudySummary(session) {
+    const summary = session.summary;
+    if (Array.isArray(summary)) return summary.join(" / ");
+    return summary || session.mainStuckPoint || "";
+  }
+
+  function formatStudySetLabel(session) {
+    const date = session.date || (session.createdAt ? String(session.createdAt).slice(0, 10) : "日付なし");
+    const setNumber = session.setNumber || "";
+    if (setNumber) return `${date} / ${setNumber}セット目`;
+    return date;
+  }
+
+  // ===== データ読み込み =====
+
+  async function reloadLightSessions() {
+    setStatus("セッションを読み込み中です。", "");
+
+    const data = await callApi({ action: "listSessions", limit: LIST_LIMIT, light: true });
+    lightSessions = (data.sessions || []).slice();
+
+    // 新しい順に統一
+    lightSessions.sort((a, b) => String(b.createdAt || b.SK).localeCompare(String(a.createdAt || a.SK)));
+
+    const totalMin = lightSessions.reduce((sum, s) => sum + Number(s.durationMinutes || 0), 0);
+    setStatus(`${lightSessions.length}セッション(合計${totalMin}分)を読み込みました。${data.hasMore ? "\n※さらに古いログがあります(表示上限500件)。" : ""}`, "ok");
+  }
+
+  // ===== 単元ツリー =====
+
+  function buildTree(sessions) {
+    // exam -> subject -> unitKey -> { unitLabel, sessions[] }
+    const tree = new Map();
+
+    for (const s of sessions) {
+      const exam = sessionExam(s);
+      const subject = s.subject || "未設定";
+      const unitKey = sessionUnitKey(s);
+      const unitLabel = s.unit || "未設定";
+
+      if (!tree.has(exam)) tree.set(exam, new Map());
+      const subjectMap = tree.get(exam);
+
+      if (!subjectMap.has(subject)) subjectMap.set(subject, new Map());
+      const unitMap = subjectMap.get(subject);
+
+      if (!unitMap.has(unitKey)) {
+        unitMap.set(unitKey, { unitLabel, sessions: [] });
+      }
+
+      const entry = unitMap.get(unitKey);
+      entry.sessions.push(s);
+      // 表記ゆれがある場合、最新セッションの表記をラベルとして使う(配列は新しい順)
+      if (entry.sessions.length === 1) entry.unitLabel = unitLabel;
+    }
+
+    return tree;
+  }
+
+  function renderTree() {
+    const treeEl = $("treeOutput");
+
+    if (lightSessions.length === 0) {
+      treeEl.className = "result-empty";
+      treeEl.textContent = "セッションはまだありません。入力ページで最初のログを作成してください。";
+      return;
+    }
+
+    const tree = buildTree(lightSessions);
+    const parts = [];
+
+    for (const [exam, subjectMap] of tree) {
+      const examCount = [...subjectMap.values()]
+        .reduce((sum, unitMap) => sum + [...unitMap.values()].reduce((s2, u) => s2 + u.sessions.length, 0), 0);
+
+      const subjectParts = [];
+
+      for (const [subject, unitMap] of subjectMap) {
+        const unitParts = [];
+
+        for (const [unitKey, entry] of unitMap) {
+          const count = entry.sessions.length;
+          const totalMin = entry.sessions.reduce((sum, s) => sum + Number(s.durationMinutes || 0), 0);
+          const latest = entry.sessions[0]?.date || "";
+          const photoCount = entry.sessions.reduce((sum, s) => sum + (Array.isArray(s.attachments) ? s.attachments.length : 0), 0);
+
+          unitParts.push(`
+            <div class="unit-row ${activeUnitKey === exam + "||" + subject + "||" + unitKey ? "active" : ""}"
+                 data-exam="${escapeHtml(exam)}" data-subject="${escapeHtml(subject)}" data-unit-key="${escapeHtml(unitKey)}">
+              <span class="unit-name">${escapeHtml(entry.unitLabel)}</span>
+              <span class="unit-meta">${count}回・${totalMin}分${photoCount ? "・📷" + photoCount : ""}<br>${escapeHtml(latest)}</span>
+            </div>
+          `);
+        }
+
+        subjectParts.push(`
+          <details class="tree-subject" open>
+            <summary>${escapeHtml(subject)} <span class="meta">(${unitMap.size}単元)</span></summary>
+            ${unitParts.join("")}
+          </details>
+        `);
+      }
+
+      parts.push(`
+        <details class="tree-exam" open>
+          <summary>${escapeHtml(exam)} <span class="meta">(${examCount}セッション)</span></summary>
+          ${subjectParts.join("")}
+        </details>
+      `);
+    }
+
+    treeEl.className = "";
+    treeEl.innerHTML = parts.join("");
+
+    treeEl.querySelectorAll(".unit-row").forEach(row => {
+      row.addEventListener("click", () => {
+        const exam = row.getAttribute("data-exam");
+        const subject = row.getAttribute("data-subject");
+        const unitKey = row.getAttribute("data-unit-key");
+        activeUnitKey = exam + "||" + subject + "||" + unitKey;
+        renderTree();
+        renderUnitSessions(exam, subject, unitKey);
+      });
+    });
+  }
+
+  // ===== セッション一覧(単元別・時系列) =====
+
+  function renderSessionList(sessions, title) {
+    $("listTitle").textContent = title;
+
+    if (!sessions || sessions.length === 0) {
+      $("listOutput").className = "result-empty";
+      $("listOutput").textContent = "該当するセッションはありません。";
+      return;
+    }
+
+    $("listOutput").className = "";
+    $("listOutput").innerHTML = sessions.map(session => {
+      const photoCount = Array.isArray(session.attachments) ? session.attachments.length : 0;
+      return `
+        <div class="list-card">
+          <strong>${escapeHtml(formatStudySetLabel(session))} / ${escapeHtml(session.subject || "")}</strong>
+          <div class="meta">${escapeHtml(session.unit || "")}・${escapeHtml(session.mode || "")}・${escapeHtml(session.durationMinutes || "")}分${photoCount ? "・📷" + photoCount + "枚" : ""}</div>
+          <div>${escapeHtml(getStudySummary(session))}</div>
+          <button class="secondary" type="button" data-session-sk="${escapeHtml(session.SK || "")}">詳細を見る</button>
+        </div>
+      `;
+    }).join("");
+
+    $("listOutput").querySelectorAll("[data-session-sk]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        await loadSessionDetail(btn.getAttribute("data-session-sk"));
+      });
+    });
+  }
+
+  function renderUnitSessions(exam, subject, unitKey) {
+    const sessions = lightSessions.filter(s =>
+      sessionExam(s) === exam &&
+      (s.subject || "未設定") === subject &&
+      sessionUnitKey(s) === unitKey
+    );
+
+    const unitLabel = sessions[0]?.unit || unitKey;
+    renderSessionList(sessions, `単元: ${unitLabel}(${sessions.length}回)`);
+    setStatus(`単元「${unitLabel}」の${sessions.length}セッションを表示しました。`, "ok");
+  }
+
+  function renderTimeline() {
+    activeUnitKey = "";
+    renderTree();
+    renderSessionList(lightSessions, "時系列一覧(新しい順)");
+  }
+
+  // ===== セッション詳細(全文+写真) =====
+
+  function renderSessionDetail(session) {
+    const summary = toArray(session.summary);
+    const checkPoints = toArray(session.checkPoints);
+    const explanations = Array.isArray(session.explanations) ? session.explanations : [];
+    const visibleCards = Array.isArray(session.visibleCards)
+      ? session.visibleCards
+      : Array.isArray(session.flashcards)
+        ? session.flashcards.map(card => ({ question: card.front, answer: card.back, category: "旧形式" }))
+        : [];
+    const savedCards = Array.isArray(session.savedCards) ? session.savedCards : [];
+    const noteText = toArray(session.noteText || session.noteSummary);
+    const attachments = (Array.isArray(session.attachments) ? session.attachments : []).filter(a => a && a.url);
+
+    const raw = escapeHtml(JSON.stringify(session, null, 2));
+
+    $("detailOutput").className = "";
+    $("detailOutput").innerHTML = `
+      <div class="meta">
+        ${escapeHtml(formatStudySetLabel(session))}
+        ｜${escapeHtml(session.exam && session.exam !== "未設定" ? session.exam : "")}
+        ${escapeHtml(session.subject || "")}
+        ｜${escapeHtml(session.unit || "")}
+        ｜${escapeHtml(session.mode || "")}・${escapeHtml(session.durationMinutes || "")}分
+      </div>
+
+      ${
+        attachments.length
+          ? `
+            <div class="result-block">
+              <h3>添付写真(${attachments.length}枚)</h3>
+              <div class="attachment-grid">
+                ${attachments.map(att => `
+                  <a href="${escapeHtml(att.url)}" target="_blank" rel="noopener">
+                    <img src="${escapeHtml(att.url)}" alt="添付写真" loading="lazy">
+                  </a>
+                `).join("")}
+              </div>
+              <div class="small-note">クリックで原寸表示。表示用URLは15分で期限切れになります(再度「詳細を見る」で再発行)。</div>
+            </div>
+          `
+          : ""
+      }
+
+      <div class="result-block">
+        <h3>学習内容まとめ</h3>
+        ${
+          summary.length
+            ? `<ul>${summary.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+            : `<p class="meta">まとめはありません。</p>`
+        }
+      </div>
+
+      <div class="result-block">
+        <h3>要確認ポイント</h3>
+        ${
+          checkPoints.length
+            ? `<ul>${checkPoints.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+            : `<p class="meta">要確認ポイントはありません。</p>`
+        }
+      </div>
+
+      <div class="result-block">
+        <h3>簡易解説・覚え方</h3>
+        ${
+          explanations.length
+            ? explanations.map(item => `
+                <div class="explanation-card">
+                  <h4>${escapeHtml(item.title || "解説")}</h4>
+                  <p><strong>簡易解説：</strong>${escapeHtml(item.shortExplanation || "")}</p>
+                  <p><strong>覚え方：</strong>${escapeHtml(item.memoryTip || "")}</p>
+                </div>
+              `).join("")
+            : `<p class="meta">解説はありません。</p>`
+        }
+      </div>
+
+      <div class="result-block">
+        <h3>復習カード</h3>
+        <div class="meta">表示カード: ${escapeHtml(visibleCards.length)}枚 / 保存用カード: ${escapeHtml(savedCards.length)}枚</div>
+        ${
+          visibleCards.length
+            ? visibleCards.map(card => `
+                <div class="review-card">
+                  <div class="front">Q. ${escapeHtml(card.question || "")}</div>
+                  <details class="plain" style="margin-top: 8px;">
+                    <summary>答えをめくる</summary>
+                    <div class="back" style="margin-top: 8px;">A. ${escapeHtml(card.answer || "")}</div>
+                  </details>
+                  ${card.category ? `<span class="chip">${escapeHtml(card.category)}</span>` : ""}
+                </div>
+              `).join("")
+            : `<p class="meta">表示用カードはありません。</p>`
+        }
+      </div>
+
+      <div class="result-block">
+        <h3>ノートに書く内容</h3>
+        ${
+          noteText.length
+            ? `<ul>${noteText.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+            : `<p class="meta">ノート用まとめはありません。</p>`
+        }
+      </div>
+
+      <details class="plain">
+        <summary>JSONを見る</summary>
+        <pre>${raw}</pre>
+      </details>
+    `;
+  }
+
+  async function loadSessionDetail(sessionSk) {
+    if (!sessionSk) return;
+
+    setStatus("セッション詳細を取得中です。", "");
+    $("detailOutput").className = "result-empty";
+    $("detailOutput").textContent = "読み込み中です。";
+
+    try {
+      const data = await callApi({ action: "getSession", sessionSk });
+      renderSessionDetail(data.session);
+      setStatus("セッション詳細を表示しました。", "ok");
+      $("detailOutput").scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (error) {
+      $("detailOutput").className = "result-empty";
+      $("detailOutput").innerHTML = `<div class="status error">${escapeHtml(error.message)}</div>`;
+      setStatus("セッション詳細の取得に失敗しました。\n" + error.message, "error");
+    }
+  }
+
+  // ===== 弱点一覧 =====
+
+  async function loadWeakPoints() {
+    setStatus("弱点一覧を取得中です。", "");
+
+    try {
+      const data = await callApi({ action: "listWeakPoints", limit: 100 });
+      const weakPoints = data.weakPoints || [];
+
+      $("listTitle").textContent = "弱点一覧(頻度順)";
+
+      if (weakPoints.length === 0) {
+        $("listOutput").className = "result-empty";
+        $("listOutput").textContent = "弱点ログはまだありません。";
+      } else {
+        $("listOutput").className = "";
+        $("listOutput").innerHTML = weakPoints.map(w => `
+          <div class="list-card">
+            <strong>${escapeHtml(w.weakLabel || w.weakKey || "弱点")}</strong>
+            <div class="meta">回数: ${escapeHtml(w.count || 0)} / 最新: ${escapeHtml(w.latestAt || "")}</div>
+            <div>${escapeHtml(w.latestReason || "")}</div>
+            ${w.latestExplanation ? `<div class="meta">解説：${escapeHtml(w.latestExplanation)}</div>` : ""}
+          </div>
+        `).join("");
+      }
+
+      setStatus("弱点一覧の取得に成功しました。", "ok");
+    } catch (error) {
+      setStatus("弱点一覧の取得に失敗しました。\n" + error.message, "error");
+    }
+  }
+
+  // ===== 復習カード(単元フィルタ付き) =====
+
+  function rebuildReviewFilters() {
+    const subjects = [];
+    const seenSubjects = new Set();
+
+    for (const s of lightSessions) {
+      const subject = s.subject || "未設定";
+      if (!seenSubjects.has(subject)) {
+        seenSubjects.add(subject);
+        subjects.push(subject);
+      }
+    }
+
+    const currentSubject = $("reviewSubject").value;
+    $("reviewSubject").innerHTML =
+      `<option value="">科目: すべて</option>` +
+      subjects.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("");
+    if (subjects.includes(currentSubject)) $("reviewSubject").value = currentSubject;
+
+    rebuildReviewUnitFilter();
+  }
+
+  function rebuildReviewUnitFilter() {
+    const subject = $("reviewSubject").value;
+    const source = subject
+      ? lightSessions.filter(s => (s.subject || "未設定") === subject)
+      : lightSessions;
+
+    const units = [];
+    const seen = new Set();
+
+    for (const s of source) {
+      const key = sessionUnitKey(s);
+      if (!seen.has(key)) {
+        seen.add(key);
+        units.push({ key, label: s.unit || "未設定" });
+      }
+    }
+
+    $("reviewUnit").innerHTML =
+      `<option value="">単元: すべて</option>` +
+      units.map(u => `<option value="${escapeHtml(u.key)}">${escapeHtml(u.label)}</option>`).join("");
+  }
+
+  function normalizeCardsFromSession(session) {
+    const sessionSk = session.SK || session.sessionSk || "";
+
+    if (Array.isArray(session.savedCards) && session.savedCards.length > 0) {
+      return session.savedCards
+        .map((card, index) => ({ card, index }))
+        .filter(({ card }) => card.question && card.answer)
+        .map(({ card, index }) => ({
+          question: card.question,
+          answer: card.answer,
+          category: card.category || "復習",
+          subject: session.subject || "",
+          unit: session.unit || "",
+          date: session.date || "",
+          sessionSk,
+          source: "savedCards",
+          cardIndex: index,
+          understood: !!card.understood
+        }));
+    }
+
+    if (Array.isArray(session.flashcards) && session.flashcards.length > 0) {
+      return session.flashcards
+        .map((card, index) => ({ card, index }))
+        .filter(({ card }) => card.front && card.back)
+        .map(({ card, index }) => ({
+          question: card.front,
+          answer: card.back,
+          category: "旧形式",
+          subject: session.subject || "",
+          unit: session.unit || "",
+          date: session.date || "",
+          sessionSk,
+          source: "flashcards",
+          cardIndex: index,
+          understood: !!card.understood
+        }));
+    }
+
+    return [];
+  }
+
+  // 問い・答えの表記ゆれを吸収して比較するためのキーを作る。
+  // 空白と句読点・疑問符を除去し、小文字化する。
+  function normalizeCardText(text) {
+    return String(text || "")
+      .toLowerCase()
+      .replace(/\s+/g, "")
+      .replace(/[？?。、．，,.!！:：;；]/g, "");
+  }
+
+  // 同じ問いのカードを1枚に統合する。
+  // - 同じ問い+同じ答え → 完全に1つにまとめる
+  // - 同じ問い+違う答え → 1枚のカードに答えを複数並べる
+  // - members には元カード全部の場所を持ち、「理解!」で全部に反映する
+  function mergeCards(cards) {
+    const byQuestion = new Map();
+
+    for (const card of cards) {
+      const key = normalizeCardText(card.question);
+
+      if (!key) continue;
+
+      if (!byQuestion.has(key)) {
+        byQuestion.set(key, {
+          question: card.question,
+          answers: [],
+          answerKeys: new Set(),
+          category: card.category,
+          subject: card.subject,
+          unit: card.unit,
+          date: card.date,
+          members: [],
+          understood: true
+        });
+      }
+
+      const merged = byQuestion.get(key);
+      const answerKey = normalizeCardText(card.answer);
+
+      if (answerKey && !merged.answerKeys.has(answerKey)) {
+        merged.answerKeys.add(answerKey);
+        merged.answers.push(card.answer);
+      }
+
+      merged.members.push({
+        sessionSk: card.sessionSk,
+        source: card.source,
+        cardIndex: card.cardIndex
+      });
+
+      if (!card.understood) merged.understood = false;
+      if (card.date && card.date > merged.date) merged.date = card.date;
+    }
+
+    return Array.from(byQuestion.values()).filter(c => c.answers.length > 0);
+  }
+
+  async function startReview() {
+    const subject = $("reviewSubject").value;
+    const unitKey = $("reviewUnit").value;
+
+    setStatus("復習カードを取得中です。", "");
+    $("reviewArea").className = "result-empty";
+    $("reviewArea").textContent = "復習カードを読み込み中です。";
+
+    try {
+      const data = await callApi({ action: "listSessions", limit: REVIEW_SESSION_LIMIT });
+      const sessions = (data.sessions || []).filter(s => {
+        if (subject && (s.subject || "未設定") !== subject) return false;
+        if (unitKey && sessionUnitKey(s) !== unitKey) return false;
+        return true;
+      });
+
+      const includeUnderstood = $("includeUnderstood").checked;
+
+      const allCards = [];
+      for (const session of sessions) {
+        allCards.push(...normalizeCardsFromSession(session));
+      }
+
+      const mergedCards = mergeCards(allCards);
+      const mergedCount = allCards.length - mergedCards.length;
+      const understoodCount = mergedCards.filter(c => c.understood).length;
+      const cards = includeUnderstood ? mergedCards : mergedCards.filter(c => !c.understood);
+
+      if (cards.length === 0) {
+        $("reviewArea").className = "result-empty";
+        $("reviewArea").textContent = understoodCount > 0
+          ? `未理解のカードはありません(理解済み${understoodCount}枚)。全部理解済みです!`
+          : "条件に合う復習カードがありません。";
+        setStatus("表示できる復習カードがありません。", "");
+        return;
+      }
+
+      renderReviewCards(cards);
+
+      const notes = [];
+      if (mergedCount > 0) notes.push(`重複${mergedCount}枚を統合`);
+      if (!includeUnderstood && understoodCount > 0) notes.push(`理解済み${understoodCount}枚は非表示`);
+      const noteText = notes.length ? `(${notes.join("、")})` : "";
+      setStatus(`復習カードを${cards.length}枚読み込みました${noteText}。`, "ok");
+    } catch (error) {
+      $("reviewArea").className = "result-empty";
+      $("reviewArea").innerHTML = `<div class="status error">復習カードの取得に失敗しました。<br>${escapeHtml(error.message)}</div>`;
+      setStatus("復習カードの取得に失敗しました。\n" + error.message, "error");
+    }
+  }
+
+  function renderReviewCards(cards) {
+    let currentIndex = 0;
+    let isAnswerShown = false;
+    let isMarking = false;
+
+    function drawDone() {
+      $("reviewArea").className = "";
+      $("reviewArea").innerHTML = `
+        <section class="review-box">
+          <div class="review-done">
+            全部めくり終わりました! 🎉<br>
+            <span style="font-size: 14px; font-weight: 600; color: var(--muted);">
+              「理解!」したカードは次回から表示されません。<br>
+              もう一度見たいときは「理解済みも含める」にチェックして復習開始。
+            </span>
+          </div>
+        </section>
+      `;
+    }
+
+    function draw(withFlip) {
+      if (cards.length === 0) {
+        drawDone();
+        return;
+      }
+
+      if (currentIndex >= cards.length) currentIndex = cards.length - 1;
+
+      const card = cards[currentIndex];
+
+      $("reviewArea").className = "";
+      $("reviewArea").innerHTML = `
+        <section class="review-box">
+          <div class="meta">
+            ${escapeHtml(currentIndex + 1)} / ${escapeHtml(cards.length)}
+            ${card.subject ? "｜" + escapeHtml(card.subject) : ""}
+            ${card.unit ? "｜" + escapeHtml(card.unit) : ""}
+            ${card.date ? "｜" + escapeHtml(card.date) : ""}
+            ${card.understood ? `<span class="understood-chip">理解済み</span>` : ""}
+          </div>
+
+          <div class="review-card-large ${isAnswerShown ? "answer-side" : ""} ${withFlip ? "flip-anim" : ""}" id="flipCard">
+            ${
+              isAnswerShown
+                ? `
+                  <p class="review-label">A.</p>
+                  ${
+                    card.answers.length > 1
+                      ? `
+                        <p class="meta" style="margin: 4px 0 8px;">この問いには${escapeHtml(card.answers.length)}通りの答えが記録されています:</p>
+                        ${card.answers.map((ans, i) => `
+                          <p class="review-answer" style="margin: 6px 0;">
+                            <span style="color: var(--primary-dark); font-weight: 900;">${escapeHtml(i + 1)}.</span>
+                            ${escapeHtml(ans)}
+                          </p>
+                        `).join("")}
+                      `
+                      : `<p class="review-answer">${escapeHtml(card.answers[0])}</p>`
+                  }
+                  ${card.category ? `<span class="chip">${escapeHtml(card.category)}</span>` : ""}
+                  ${card.members.length > 1 ? `<span class="chip">${escapeHtml(card.members.length)}セッション分を統合</span>` : ""}
+                  <div class="flip-hint">カードをタップで問題に戻る</div>
+                `
+                : `
+                  <p class="review-label">Q.</p>
+                  <p class="review-question">${escapeHtml(card.question)}</p>
+                  <div class="flip-hint">カードをタップで答えをめくる</div>
+                `
+            }
+          </div>
+
+          <div class="review-actions">
+            ${
+              isAnswerShown
+                ? card.understood
+                  ? `<button class="secondary" id="understoodBtn" type="button">理解を取り消す</button>`
+                  : `<button class="understood" id="understoodBtn" type="button">理解!</button>`
+                : ""
+            }
+            <button class="secondary" id="prevCardBtn" type="button">前へ</button>
+            <button class="secondary" id="nextCardBtn" type="button">次へ</button>
+            <button class="ghost" id="shuffleCardBtn" type="button">シャッフル</button>
+          </div>
+        </section>
+      `;
+
+      $("flipCard").addEventListener("click", () => {
+        isAnswerShown = !isAnswerShown;
+        draw(true);
+      });
+
+      const understoodBtn = $("understoodBtn");
+      if (understoodBtn) {
+        understoodBtn.addEventListener("click", async () => {
+          if (isMarking) return;
+
+          const members = (card.members || []).filter(m => m.sessionSk);
+
+          if (members.length === 0) {
+            setStatus("このカードは旧データのため理解状態を保存できません。", "error");
+            return;
+          }
+
+          isMarking = true;
+          understoodBtn.disabled = true;
+          const makeUnderstood = !card.understood;
+
+          try {
+            // 統合カードの元カード全部に理解状態を反映する
+            for (const member of members) {
+              await callApi({
+                action: "markCardUnderstood",
+                sessionSk: member.sessionSk,
+                source: member.source,
+                cardIndex: member.cardIndex,
+                understood: makeUnderstood
+              });
+            }
+
+            if (makeUnderstood) {
+              cards.splice(currentIndex, 1);
+              isAnswerShown = false;
+              setStatus(`理解! このカードは次回から表示されません(残り${cards.length}枚)。`, "ok");
+              draw(true);
+            } else {
+              card.understood = false;
+              setStatus("理解を取り消しました。次回からまた表示されます。", "ok");
+              draw(false);
+            }
+          } catch (error) {
+            setStatus("理解状態の保存に失敗しました。\n" + error.message, "error");
+            draw(false);
+          } finally {
+            isMarking = false;
+          }
+        });
+      }
+
+      $("prevCardBtn").addEventListener("click", (e) => {
+        e.stopPropagation();
+        currentIndex = Math.max(0, currentIndex - 1);
+        isAnswerShown = false;
+        draw(true);
+      });
+
+      $("nextCardBtn").addEventListener("click", (e) => {
+        e.stopPropagation();
+        currentIndex = Math.min(cards.length - 1, currentIndex + 1);
+        isAnswerShown = false;
+        draw(true);
+      });
+
+      $("shuffleCardBtn").addEventListener("click", (e) => {
+        e.stopPropagation();
+        currentIndex = Math.floor(Math.random() * cards.length);
+        isAnswerShown = false;
+        draw(true);
+      });
+    }
+
+    draw(false);
+  }
+
+  // ===== 初期化 =====
+
+  async function reloadAll() {
+    try {
+      await reloadLightSessions();
+      renderTree();
+      rebuildReviewFilters();
+    } catch (error) {
+      $("treeOutput").className = "result-empty";
+      $("treeOutput").innerHTML = `<div class="status error">${escapeHtml(error.message)}</div>`;
+      setStatus("読み込みに失敗しました。\n" + error.message, "error");
+    }
+  }
+
+  function saveApiUrl() {
+    localStorage.setItem(API_URL_STORAGE_KEY, getApiUrl());
+    setStatus("API Gateway URLをブラウザに保存しました。", "ok");
+  }
+
+  function init() {
+    const savedUrl = localStorage.getItem(API_URL_STORAGE_KEY);
+    if (savedUrl) $("apiUrl").value = savedUrl;
+
+    $("saveApiUrlBtn").addEventListener("click", saveApiUrl);
+    $("reloadBtn").addEventListener("click", reloadAll);
+    $("timelineBtn").addEventListener("click", renderTimeline);
+    $("weakBtn").addEventListener("click", loadWeakPoints);
+    $("startReviewBtn").addEventListener("click", startReview);
+    $("reviewSubject").addEventListener("change", rebuildReviewUnitFilter);
+
+    reloadAll();
+  }
+
+  init();
+</script>
+</body>
+</html>

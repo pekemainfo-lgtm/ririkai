@@ -1,0 +1,73 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { buildSessionMarkdown } from "../lib/markdown.mjs";
+
+function baseSession(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    sessionId: "session_test123",
+    userId: "naohiro",
+    studyDate: "2026-07-18",
+    qualification: "AWS SOA-C03",
+    subject: "Monitoring",
+    topic: "CloudWatch and CloudTrail",
+    durationMinutes: 25,
+    status: "completed",
+    createdAt: "2026-07-18T14:30:00.000Z",
+    updatedAt: "2026-07-18T14:30:00.000Z",
+    cardIds: [],
+    noteImages: [],
+    purpose: "違いを説明できるようにする",
+    notUnderstoodItems: ["CloudTrailの範囲が曖昧"],
+    rawTranscript: "これは生の文字起こしです。CloudTrailはCPU使用率を監視すると思う。",
+    polishedTranscript: "これは表記を整えた文字起こしです。CloudTrailはCPU使用率を監視すると思う。",
+    understoodPoints: ["CloudWatchがメトリクスを扱うことは理解している"],
+    ambiguousPoints: ["CloudTrailとCloudWatch Logsの関係"],
+    misconceptions: ["CloudTrailがCPU使用率を監視すると誤解している可能性"],
+    confirmQuestions: ["CPU使用率を確認するサービスは？"],
+    reviewItems: ["CloudWatch", "CloudTrail"],
+    purposeJudgement: null,
+    ...overrides
+  };
+}
+
+test("Front Matterに主要フィールドが出力される", () => {
+  const md = buildSessionMarkdown(baseSession());
+  assert.match(md, /^---\n/);
+  assert.match(md, /schemaVersion: 1/);
+  assert.match(md, /sessionId: session_test123/);
+  assert.match(md, /studyDate: 2026-07-18/);
+  assert.match(md, /cardIds: \[\]/);
+  assert.match(md, /noteImages: \[\]/);
+});
+
+test("生の文字起こしと表記を整えた文字起こしが両方そのまま含まれる(意味の書き換えがない)", () => {
+  const session = baseSession();
+  const md = buildSessionMarkdown(session);
+  assert.ok(md.includes(session.rawTranscript));
+  assert.ok(md.includes(session.polishedTranscript));
+});
+
+test("AI分析の各セクションが出力される", () => {
+  const md = buildSessionMarkdown(baseSession());
+  assert.match(md, /### 理解できている点/);
+  assert.match(md, /### 曖昧な点/);
+  assert.match(md, /### 誤解の可能性/);
+  assert.match(md, /### 確認質問/);
+  assert.match(md, /## 復習事項/);
+  assert.match(md, /## 関連カード/);
+});
+
+test("purposeJudgementがある場合は達成判定セクションが出力される", () => {
+  const md = buildSessionMarkdown(
+    baseSession({ purposeJudgement: { status: "一部達成", reason: "違いの一部のみ説明できた" } })
+  );
+  assert.match(md, /### 達成判定/);
+  assert.match(md, /一部達成/);
+  assert.match(md, /違いの一部のみ説明できた/);
+});
+
+test("purposeJudgementがない場合は達成判定セクションを出力しない", () => {
+  const md = buildSessionMarkdown(baseSession({ purposeJudgement: null }));
+  assert.ok(!md.includes("### 達成判定"));
+});

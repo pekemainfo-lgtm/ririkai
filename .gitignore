@@ -1,0 +1,14 @@
+node_modules/
+
+# ローカルのClaude Code設定（コミットしない）
+.claude/
+
+# Terraform
+terraform/.terraform/
+terraform/build/
+terraform/tfplan
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/crash.log
+terraform/crash.*.log
+*.tfvars

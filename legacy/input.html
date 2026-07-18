@@ -1,0 +1,1036 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>入力・AIログ作成 - Eureka Study</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --text: #18202a;
+      --muted: #657386;
+      --line: #d9e0ea;
+      --primary: #2563eb;
+      --primary-dark: #1d4ed8;
+      --danger: #dc2626;
+      --ok: #16a34a;
+      --warn: #f59e0b;
+      --soft: #eef4ff;
+      --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      --radius: 18px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans JP", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: rgba(255, 255, 255, 0.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .header-inner {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 16px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    h1 { margin: 0; font-size: 22px; line-height: 1.2; }
+
+    .sub-title { color: var(--muted); font-size: 13px; margin-top: 4px; }
+
+    .nav-link {
+      font-weight: 800;
+      color: var(--primary-dark);
+      text-decoration: none;
+      background: var(--soft);
+      border: 1px solid #c7d8ff;
+      border-radius: 999px;
+      padding: 9px 14px;
+      white-space: nowrap;
+    }
+
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 22px 18px 60px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 20px;
+    }
+
+    .card + .card { margin-top: 18px; }
+
+    h2 { font-size: 18px; margin: 0 0 14px; }
+    h3 { font-size: 15px; margin: 18px 0 8px; }
+    h4 { font-size: 15px; margin: 0 0 8px; }
+
+    label {
+      display: block;
+      font-weight: 700;
+      margin: 12px 0 6px;
+      font-size: 14px;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 11px 12px;
+      font: inherit;
+      background: #fff;
+      color: var(--text);
+      outline: none;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    }
+
+    textarea { min-height: 220px; resize: vertical; }
+
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    button {
+      border: none;
+      border-radius: 999px;
+      padding: 11px 16px;
+      font-weight: 800;
+      font: inherit;
+      cursor: pointer;
+      transition: 0.15s ease;
+    }
+
+    button.primary { background: var(--primary); color: white; }
+    button.primary:hover { background: var(--primary-dark); }
+
+    button.secondary {
+      background: var(--soft);
+      color: var(--primary-dark);
+      border: 1px solid #c7d8ff;
+    }
+    button.secondary:hover { background: #dfeaff; }
+
+    button.ghost { background: #f3f4f6; color: var(--text); }
+
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+    .status {
+      margin-top: 12px;
+      padding: 11px 12px;
+      border-radius: 12px;
+      background: #f8fafc;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 14px;
+      white-space: pre-wrap;
+    }
+
+    .status.ok { color: #166534; background: #ecfdf3; border-color: #bbf7d0; }
+    .status.error { color: #991b1b; background: #fef2f2; border-color: #fecaca; }
+
+    .result-empty {
+      color: var(--muted);
+      background: #f8fafc;
+      border: 1px dashed var(--line);
+      border-radius: 14px;
+      padding: 20px;
+      text-align: center;
+    }
+
+    .result-block {
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+      margin-top: 12px;
+    }
+
+    .meta { color: var(--muted); font-size: 13px; }
+
+    .chip {
+      display: inline-block;
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+      border-radius: 999px;
+      padding: 4px 9px;
+      font-size: 12px;
+      color: #475569;
+      margin-right: 6px;
+      margin-top: 6px;
+    }
+
+    .explanation-card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      margin-top: 10px;
+      background: #fbfdff;
+    }
+
+    .review-card {
+      border: 1px solid #c7d8ff;
+      border-radius: 14px;
+      padding: 14px;
+      margin-top: 10px;
+      background: #f8fbff;
+    }
+
+    details {
+      margin-top: 12px;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: #fff;
+    }
+
+    summary { cursor: pointer; font-weight: 800; color: var(--primary-dark); }
+
+    pre {
+      overflow: auto;
+      max-height: 360px;
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 14px;
+      border-radius: 14px;
+      font-size: 12px;
+    }
+
+    .small-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+    .api-box {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: end;
+    }
+
+    ul { padding-left: 20px; }
+
+    /* 写真添付 */
+    .photo-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .photo-item {
+      width: 110px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 6px;
+      background: #fff;
+      text-align: center;
+    }
+
+    .photo-item img {
+      width: 100%;
+      height: 80px;
+      object-fit: cover;
+      border-radius: 8px;
+      background: #f1f5f9;
+    }
+
+    .photo-item .photo-state { font-size: 11px; margin-top: 4px; }
+    .photo-state.done { color: var(--ok); font-weight: 700; }
+    .photo-state.error { color: var(--danger); font-weight: 700; }
+    .photo-state.working { color: var(--warn); font-weight: 700; }
+
+    .photo-item button {
+      margin-top: 4px;
+      padding: 4px 10px;
+      font-size: 11px;
+    }
+
+    .file-btn {
+      display: inline-block;
+      background: var(--soft);
+      color: var(--primary-dark);
+      border: 1px solid #c7d8ff;
+      border-radius: 999px;
+      padding: 11px 16px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .file-btn input { display: none; }
+
+    @media (max-width: 700px) {
+      .row, .row-3 { grid-template-columns: 1fr; }
+      .header-inner { align-items: flex-start; flex-direction: column; }
+      .api-box { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <div class="header-inner">
+      <div>
+        <h1>入力・AIログ作成</h1>
+        <div class="sub-title">話す → 貼る → 写真を付ける → AIが整理 → 保存</div>
+      </div>
+      <a class="nav-link" href="summary.html">まとめページ →</a>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <details>
+        <summary>API設定(通常は触らない)</summary>
+        <div class="api-box" style="margin-top: 10px;">
+          <div>
+            <label for="apiUrl">API Gateway URL</label>
+            <input id="apiUrl" value="https://xt65dgklb3.execute-api.ap-northeast-1.amazonaws.com/api" />
+          </div>
+          <button class="secondary" id="saveApiUrlBtn" type="button">URL保存</button>
+        </div>
+        <div class="small-note">API Gatewayを作り直した場合だけ変更してください。まとめページと共有されます。</div>
+      </details>
+    </section>
+
+    <section class="card">
+      <h2>今日の学習</h2>
+
+      <div class="row-3">
+        <div>
+          <label for="exam">試験</label>
+          <input id="exam" list="examList" placeholder="例: CCNA" value="CCNA" />
+          <datalist id="examList"></datalist>
+        </div>
+        <div>
+          <label for="subject">科目</label>
+          <input id="subject" list="subjectList" placeholder="例: CCNA 200-301" value="CCNA 200-301" />
+          <datalist id="subjectList"></datalist>
+        </div>
+        <div>
+          <label for="unit">単元</label>
+          <input id="unit" list="unitList" placeholder="例: TCP/IPの基礎" />
+          <datalist id="unitList"></datalist>
+        </div>
+      </div>
+      <div class="small-note">単元は過去に使った名前が候補に出ます。<strong>表記を揃えるほど、まとめページの単元別表示がきれいになります。</strong></div>
+
+      <div class="row-3">
+        <div>
+          <label for="mode">モード</label>
+          <select id="mode">
+            <option value="practice" selected>演習</option>
+            <option value="input">インプット</option>
+            <option value="free">フリー</option>
+          </select>
+        </div>
+        <div>
+          <label for="durationMinutes">時間(分)</label>
+          <input id="durationMinutes" type="number" min="1" value="25" />
+        </div>
+        <div>
+          <label for="memo">補足メモ</label>
+          <input id="memo" placeholder="例: 紙の問題集で演習した。" />
+        </div>
+      </div>
+
+      <label for="transcript">文字起こし貼り付け欄</label>
+      <textarea id="transcript" placeholder="ここにiPhoneの文字起こしや、学習中の独り言を貼ります。"></textarea>
+
+      <h3>写真添付(問題集・ノートなど / 最大6枚)</h3>
+      <label class="file-btn">
+        写真を選ぶ
+        <input id="photoInput" type="file" accept="image/*" multiple />
+      </label>
+      <div id="photoList" class="photo-list"></div>
+      <div class="small-note">選んだ写真は自動で縮小(長辺1600px)してからアップロードします。保存ボタンを押した時にセッションと紐付きます。</div>
+
+      <div class="actions">
+        <button class="primary" id="generateBtn" type="button">AIログ作成</button>
+        <button class="secondary" id="saveSessionBtn" type="button" disabled>保存</button>
+        <button class="ghost" id="fillSampleBtn" type="button">サンプル入力</button>
+        <button class="ghost" id="clearBtn" type="button">入力クリア</button>
+      </div>
+
+      <div id="status" class="status">文字起こしを貼って「AIログ作成」を押してください。</div>
+    </section>
+
+    <section class="card">
+      <h2>結果表示</h2>
+      <div id="resultOutput" class="result-empty">AIログ作成後、ここに学習ログが表示されます。</div>
+    </section>
+  </main>
+
+  <script>
+  const DEFAULT_API_URL = "https://xt65dgklb3.execute-api.ap-northeast-1.amazonaws.com/api";
+  const API_URL_STORAGE_KEY = "eurekaStudyApiUrl";
+
+  let currentStudyLog = null;
+  let lastGenerateJobId = null;
+  let isGenerating = false;
+  let pendingAttachments = []; // {id, name, s3Key, contentType, previewUrl, state, error}
+  let attachmentSeq = 0;
+  let knownSessions = [];
+
+  const MAX_PHOTOS = 6;
+  const PHOTO_MAX_EDGE = 1600;
+  const PHOTO_JPEG_QUALITY = 0.8;
+
+  const POLL_INTERVAL_MS = 3000;
+  const GENERATE_TIMEOUT_MS = 240000;
+  const FETCH_TIMEOUT_MS = 45000;
+
+  const $ = (id) => document.getElementById(id);
+
+  function getApiUrl() {
+    return ($("apiUrl").value || DEFAULT_API_URL).trim();
+  }
+
+  function setStatus(message, type = "") {
+    const el = $("status");
+    el.textContent = message;
+    el.className = "status" + (type ? " " + type : "");
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function unwrapLambdaResponse(data) {
+    if (data && typeof data.body === "string") {
+      try {
+        return JSON.parse(data.body);
+      } catch {
+        return data;
+      }
+    }
+    return data;
+  }
+
+  async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error("API通信がタイムアウトしました。ネットワーク、API Gateway、Lambdaログを確認してください。");
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  async function callApi(payload) {
+    const response = await fetchWithTimeout(getApiUrl(), {
+      method: "POST",
+      headers: {
+        // text/plain にして、ブラウザのCORSプリフライトを避ける
+        "Content-Type": "text/plain;charset=UTF-8"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const text = await response.text();
+    let data;
+
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch (error) {
+      throw new Error("APIの返答をJSONとして読めませんでした: " + text.slice(0, 300));
+    }
+
+    data = unwrapLambdaResponse(data);
+
+    if (!response.ok) {
+      throw new Error(data.message || data.error || "API error: " + response.status);
+    }
+
+    if (data.status === "error") {
+      throw new Error(data.message || data.error || "API error");
+    }
+
+    return data;
+  }
+
+  function getInputPayloadBase() {
+    return {
+      exam: $("exam").value.trim() || "未設定",
+      subject: $("subject").value.trim() || "未設定",
+      unit: $("unit").value.trim() || "未設定",
+      mode: $("mode").value,
+      durationMinutes: Number($("durationMinutes").value || 25),
+      transcript: $("transcript").value.trim(),
+      memo: $("memo").value.trim()
+    };
+  }
+
+  // ===== 単元サジェスト =====
+
+  async function loadSuggestions() {
+    try {
+      const data = await callApi({ action: "listSessions", limit: 300, light: true });
+      knownSessions = data.sessions || [];
+      rebuildDatalists();
+    } catch (error) {
+      // サジェストは補助機能なので、失敗しても何もしない(初回起動やオフライン時)
+      console.log("loadSuggestions skipped:", error.message);
+    }
+  }
+
+  function uniqueInOrder(values) {
+    const seen = new Set();
+    const out = [];
+    for (const value of values) {
+      const v = String(value || "").trim();
+      if (!v || v === "未設定" || seen.has(v)) continue;
+      seen.add(v);
+      out.push(v);
+    }
+    return out;
+  }
+
+  function rebuildDatalists() {
+    const exams = uniqueInOrder(knownSessions.map(s => s.exam));
+    const subjects = uniqueInOrder(knownSessions.map(s => s.subject));
+
+    const currentSubject = $("subject").value.trim();
+    const unitSource = knownSessions.filter(s => !currentSubject || s.subject === currentSubject);
+    const units = uniqueInOrder(
+      (unitSource.length ? unitSource : knownSessions).map(s => s.unit)
+    );
+
+    $("examList").innerHTML = exams.map(v => `<option value="${escapeHtml(v)}">`).join("");
+    $("subjectList").innerHTML = subjects.map(v => `<option value="${escapeHtml(v)}">`).join("");
+    $("unitList").innerHTML = units.map(v => `<option value="${escapeHtml(v)}">`).join("");
+  }
+
+  // ===== 写真添付 =====
+
+  function loadImageFromFile(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => resolve({ img, url });
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error("画像を読み込めませんでした: " + file.name));
+      };
+      img.src = url;
+    });
+  }
+
+  async function compressImage(file) {
+    const { img, url } = await loadImageFromFile(file);
+
+    try {
+      const w0 = img.naturalWidth || img.width;
+      const h0 = img.naturalHeight || img.height;
+      const scale = Math.min(1, PHOTO_MAX_EDGE / Math.max(w0, h0));
+      const w = Math.max(1, Math.round(w0 * scale));
+      const h = Math.max(1, Math.round(h0 * scale));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+
+      const blob = await new Promise((resolve) =>
+        canvas.toBlob(resolve, "image/jpeg", PHOTO_JPEG_QUALITY)
+      );
+
+      if (!blob) {
+        throw new Error("画像の圧縮に失敗しました: " + file.name);
+      }
+
+      return blob;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  function renderAttachments() {
+    const listEl = $("photoList");
+
+    if (pendingAttachments.length === 0) {
+      listEl.innerHTML = "";
+      return;
+    }
+
+    const stateLabel = {
+      compressing: ["圧縮中...", "working"],
+      uploading: ["アップロード中...", "working"],
+      done: ["添付OK", "done"],
+      error: ["失敗", "error"]
+    };
+
+    listEl.innerHTML = pendingAttachments.map(att => {
+      const [label, cls] = stateLabel[att.state] || [att.state, ""];
+      return `
+        <div class="photo-item">
+          ${att.previewUrl ? `<img src="${escapeHtml(att.previewUrl)}" alt="">` : `<div style="height:80px;"></div>`}
+          <div class="photo-state ${cls}">${escapeHtml(label)}</div>
+          ${att.error ? `<div class="photo-state error">${escapeHtml(att.error)}</div>` : ""}
+          <button class="ghost" type="button" data-remove-id="${att.id}">削除</button>
+        </div>
+      `;
+    }).join("");
+
+    listEl.querySelectorAll("[data-remove-id]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const id = Number(btn.getAttribute("data-remove-id"));
+        const index = pendingAttachments.findIndex(a => a.id === id);
+        if (index >= 0) {
+          if (pendingAttachments[index].previewUrl) {
+            URL.revokeObjectURL(pendingAttachments[index].previewUrl);
+          }
+          pendingAttachments.splice(index, 1);
+          renderAttachments();
+        }
+      });
+    });
+  }
+
+  async function handlePhotoSelect(event) {
+    const files = [...(event.target.files || [])];
+    event.target.value = "";
+
+    for (const file of files) {
+      if (pendingAttachments.length >= MAX_PHOTOS) {
+        setStatus(`写真は${MAX_PHOTOS}枚までです。`, "error");
+        break;
+      }
+
+      const entry = {
+        id: ++attachmentSeq,
+        name: file.name,
+        s3Key: "",
+        contentType: "image/jpeg",
+        previewUrl: "",
+        state: "compressing",
+        error: ""
+      };
+
+      pendingAttachments.push(entry);
+      renderAttachments();
+
+      try {
+        const blob = await compressImage(file);
+        entry.previewUrl = URL.createObjectURL(blob);
+        entry.state = "uploading";
+        renderAttachments();
+
+        const res = await callApi({ action: "getUploadUrl", contentType: "image/jpeg" });
+
+        const putResponse = await fetchWithTimeout(res.uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "image/jpeg" },
+          body: blob
+        }, 60000);
+
+        if (!putResponse.ok) {
+          throw new Error("S3アップロード失敗: " + putResponse.status);
+        }
+
+        entry.s3Key = res.s3Key;
+        entry.state = "done";
+      } catch (error) {
+        entry.state = "error";
+        entry.error = error.message;
+      }
+
+      renderAttachments();
+    }
+  }
+
+  function getUploadedAttachments() {
+    return pendingAttachments
+      .filter(att => att.state === "done" && att.s3Key)
+      .map(att => ({ s3Key: att.s3Key, contentType: att.contentType }));
+  }
+
+  function clearAttachments() {
+    for (const att of pendingAttachments) {
+      if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
+    }
+    pendingAttachments = [];
+    renderAttachments();
+  }
+
+  // ===== 学習ログ表示 =====
+
+  function toArray(value) {
+    if (Array.isArray(value)) return value;
+    if (value === undefined || value === null || value === "") return [];
+    return [value];
+  }
+
+  function renderStudyLog(studyLog, options = {}) {
+    if (!studyLog) {
+      $("resultOutput").className = "result-empty";
+      $("resultOutput").textContent = "表示する学習ログがありません。";
+      return;
+    }
+
+    if (studyLog.status === "error") {
+      $("resultOutput").className = "result-empty";
+      $("resultOutput").innerHTML = `<div class="status error">${escapeHtml(studyLog.message || "学習ログを作成できませんでした。")}</div>`;
+      return;
+    }
+
+    const summary = toArray(studyLog.summary);
+    const checkPoints = toArray(studyLog.checkPoints);
+    const explanations = Array.isArray(studyLog.explanations) ? studyLog.explanations : [];
+    const visibleCards = Array.isArray(studyLog.visibleCards)
+      ? studyLog.visibleCards
+      : Array.isArray(studyLog.flashcards)
+        ? studyLog.flashcards.map(card => ({ question: card.front, answer: card.back, category: "旧形式" }))
+        : [];
+    const savedCards = Array.isArray(studyLog.savedCards) ? studyLog.savedCards : [];
+    const noteText = toArray(studyLog.noteText || studyLog.noteSummary);
+
+    const raw = escapeHtml(JSON.stringify(studyLog, null, 2));
+
+    $("resultOutput").className = "";
+    $("resultOutput").innerHTML = `
+      <div class="meta">${escapeHtml(options.title || "AI学習ログ")}</div>
+
+      <div class="result-block">
+        <h3>学習内容まとめ</h3>
+        ${
+          summary.length
+            ? `<ul>${summary.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+            : `<p class="meta">まとめはありません。</p>`
+        }
+      </div>
+
+      <div class="result-block">
+        <h3>要確認ポイント</h3>
+        ${
+          checkPoints.length
+            ? `<ul>${checkPoints.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+            : `<p class="meta">要確認ポイントはありません。</p>`
+        }
+      </div>
+
+      <div class="result-block">
+        <h3>簡易解説・覚え方</h3>
+        ${
+          explanations.length
+            ? explanations.map(item => `
+                <div class="explanation-card">
+                  <h4>${escapeHtml(item.title || "解説")}</h4>
+                  <p><strong>簡易解説：</strong>${escapeHtml(item.shortExplanation || "")}</p>
+                  <p><strong>覚え方：</strong>${escapeHtml(item.memoryTip || "")}</p>
+
+                  <details>
+                    <summary>もっと詳しく調べる</summary>
+                    <p>以下について整理したいです。</p>
+                    <ul>
+                      <li>${escapeHtml(item.deepDiveMemo?.topic || item.title || "")}</li>
+                    </ul>
+                    <p>特に</p>
+                    <ul>
+                      ${(item.deepDiveMemo?.points || []).map(point => `<li>${escapeHtml(point)}</li>`).join("")}
+                    </ul>
+                  </details>
+                </div>
+              `).join("")
+            : `<p class="meta">解説はありません。</p>`
+        }
+      </div>
+
+      <div class="result-block">
+        <h3>復習カード</h3>
+        <div class="meta">
+          表示カード: ${escapeHtml(visibleCards.length)}枚 / 保存用カード: ${escapeHtml(savedCards.length)}枚
+        </div>
+        ${
+          visibleCards.length
+            ? visibleCards.map(card => `
+                <div class="review-card">
+                  <div class="front">Q. ${escapeHtml(card.question || "")}</div>
+                  <details style="margin-top: 8px;">
+                    <summary>答えをめくる</summary>
+                    <div class="back" style="margin-top: 8px;">A. ${escapeHtml(card.answer || "")}</div>
+                  </details>
+                  ${card.category ? `<span class="chip">${escapeHtml(card.category)}</span>` : ""}
+                  ${card.reason ? `<div class="meta">${escapeHtml(card.reason)}</div>` : ""}
+                </div>
+              `).join("")
+            : `<p class="meta">表示用カードはありません。</p>`
+        }
+      </div>
+
+      <div class="result-block">
+        <h3>ノートに書く内容</h3>
+        ${
+          noteText.length
+            ? `<ul>${noteText.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+            : `<p class="meta">ノート用まとめはありません。</p>`
+        }
+      </div>
+
+      <details>
+        <summary>JSONを見る</summary>
+        <pre>${raw}</pre>
+      </details>
+    `;
+  }
+
+  function renderProcessingJob(jobId, message = "AIログ作成中です。", elapsedSec = 0, pollCount = 0) {
+    $("resultOutput").className = "";
+    $("resultOutput").innerHTML = `
+      <div class="status">
+        ${escapeHtml(message)}
+        <br>経過: ${escapeHtml(elapsedSec)}秒
+        <br>確認回数: ${escapeHtml(pollCount)}回
+        <br>jobId: ${escapeHtml(jobId)}
+        <br>しっかりした回答を作成するため、30秒〜2分ほどかかることがあります。
+      </div>
+    `;
+  }
+
+  async function generateLogWithPolling(payload) {
+    const start = await callApi({
+      action: "generateLog",
+      ...payload
+    });
+
+    // 旧Lambda互換：同期で完成結果が返ってきた場合
+    if (start.status === "ok" && start.studyLog) {
+      return {
+        status: "ok",
+        message: start.message || "generateLog success",
+        input: start.input || payload,
+        studyLog: start.studyLog
+      };
+    }
+
+    // 新Lambda：非同期ジョブ方式
+    if (start.status !== "processing" || !start.jobId) {
+      throw new Error(start.message || "AIログ作成を開始できませんでした。");
+    }
+
+    const jobId = start.jobId;
+    lastGenerateJobId = jobId;
+
+    renderProcessingJob(jobId, start.message || "AIログ作成を開始しました。", 0, 0);
+    setStatus(`AIログ作成を開始しました。\njobId: ${jobId}\n完成までしばらく待ちます。`, "");
+
+    const startedAt = Date.now();
+    let pollCount = 0;
+
+    while (Date.now() - startedAt < GENERATE_TIMEOUT_MS) {
+      await sleep(POLL_INTERVAL_MS);
+      pollCount += 1;
+
+      const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+      setStatus(`AIログ作成中です。\n経過: ${elapsedSec}秒\n確認回数: ${pollCount}回\njobId: ${jobId}`, "");
+      renderProcessingJob(jobId, `AIログ作成中です。経過 ${elapsedSec} 秒`, elapsedSec, pollCount);
+
+      const job = await callApi({
+        action: "getGenerateLogJob",
+        jobId
+      });
+
+      if (job.status === "ok" && job.jobStatus === "done" && job.studyLog) {
+        return {
+          status: "ok",
+          message: "generateLog success",
+          input: job.input || payload,
+          studyLog: job.studyLog,
+          jobId
+        };
+      }
+
+      if (job.status === "error" || job.jobStatus === "error") {
+        throw new Error(job.message || "AIログ作成に失敗しました。");
+      }
+    }
+
+    throw new Error("AIログ作成に時間がかかっています。Lambdaのログを確認するか、少し短い入力で再試行してください。");
+  }
+
+  async function generateLog() {
+    if (isGenerating) return;
+
+    const base = getInputPayloadBase();
+
+    if (!base.transcript) {
+      setStatus("文字起こし欄が空です。まず学習中の独り言を貼ってください。", "error");
+      return;
+    }
+
+    const stillWorking = pendingAttachments.some(att => att.state === "compressing" || att.state === "uploading");
+    if (stillWorking) {
+      setStatus("写真のアップロード中です。終わってからAIログ作成を押すと、写真の文字も読み取れます。", "error");
+      return;
+    }
+
+    const attachments = getUploadedAttachments();
+    const payload = { ...base, attachments };
+
+    isGenerating = true;
+    currentStudyLog = null;
+    lastGenerateJobId = null;
+
+    setStatus(
+      attachments.length
+        ? `AIログ作成を開始します。写真${attachments.length}枚の文字も読み取ります。`
+        : "AIログ作成を開始します。",
+      ""
+    );
+    $("generateBtn").disabled = true;
+    $("saveSessionBtn").disabled = true;
+
+    $("resultOutput").className = "";
+    $("resultOutput").innerHTML = `<div class="status">AIログ作成を開始しています。</div>`;
+
+    try {
+      const data = await generateLogWithPolling(payload);
+
+      currentStudyLog = data.studyLog;
+      renderStudyLog(currentStudyLog, { title: "未保存のAI学習ログ" });
+
+      $("saveSessionBtn").disabled = false;
+      setStatus("AIログ作成に成功しました。内容を確認して「保存」を押してください。", "ok");
+    } catch (error) {
+      $("resultOutput").className = "result-empty";
+      $("resultOutput").innerHTML = `<div class="status error">AIログ作成に失敗しました。<br>${escapeHtml(error.message)}</div>`;
+      setStatus("AIログ作成に失敗しました。\n" + error.message, "error");
+    } finally {
+      isGenerating = false;
+      $("generateBtn").disabled = false;
+    }
+  }
+
+  async function saveSession() {
+    if (!currentStudyLog) {
+      setStatus("保存するAIログがありません。先にAIログ作成をしてください。", "error");
+      return;
+    }
+
+    const stillWorking = pendingAttachments.some(att => att.state === "compressing" || att.state === "uploading");
+    if (stillWorking) {
+      setStatus("写真のアップロードが終わっていません。少し待ってから保存してください。", "error");
+      return;
+    }
+
+    const failed = pendingAttachments.filter(att => att.state === "error").length;
+    const attachments = getUploadedAttachments();
+
+    const base = getInputPayloadBase();
+    setStatus("DynamoDBに保存中です。", "");
+    $("saveSessionBtn").disabled = true;
+
+    try {
+      await callApi({
+        action: "saveSession",
+        exam: base.exam,
+        subject: base.subject,
+        unit: base.unit,
+        mode: base.mode,
+        durationMinutes: base.durationMinutes,
+        studyLog: currentStudyLog,
+        attachments
+      });
+
+      const photoNote = attachments.length
+        ? `写真${attachments.length}枚を添付しました。`
+        : "";
+      const failNote = failed
+        ? `(失敗した写真${failed}枚は保存されていません)`
+        : "";
+
+      setStatus(`保存に成功しました。${photoNote}${failNote}\nまとめページで確認できます。`, "ok");
+      clearAttachments();
+      loadSuggestions();
+    } catch (error) {
+      setStatus("保存に失敗しました。\n" + error.message, "error");
+      $("saveSessionBtn").disabled = false;
+    }
+  }
+
+  function fillSample() {
+    $("exam").value = "LinuC";
+    $("subject").value = "LinuC 101";
+    $("unit").value = "ファイル・ディレクトリ操作";
+    $("mode").value = "practice";
+    $("durationMinutes").value = "25";
+    $("memo").value = "紙の問題集で演習した。";
+    $("transcript").value = "chmod -R がまたわからない。配下にも適用するやつだと思うけど、chmod 755 dir との違いが曖昧。ハードリンクはFile1を消してもFile2が残るというのは覚えたけど、inodeで説明しろと言われると怪しい。find . のドットは今いる場所という意味だった気がする。";
+    setStatus("サンプルを入力しました。AIログ作成を押してください。", "ok");
+  }
+
+  function clearInput() {
+    $("transcript").value = "";
+    $("memo").value = "";
+    currentStudyLog = null;
+    lastGenerateJobId = null;
+    clearAttachments();
+    $("saveSessionBtn").disabled = true;
+    $("resultOutput").className = "result-empty";
+    $("resultOutput").textContent = "AIログ作成後、ここに学習ログが表示されます。";
+    setStatus("入力をクリアしました。", "");
+  }
+
+  function saveApiUrl() {
+    localStorage.setItem(API_URL_STORAGE_KEY, getApiUrl());
+    setStatus("API Gateway URLをブラウザに保存しました。", "ok");
+  }
+
+  function init() {
+    const savedUrl = localStorage.getItem(API_URL_STORAGE_KEY);
+    if (savedUrl) $("apiUrl").value = savedUrl;
+
+    $("generateBtn").addEventListener("click", generateLog);
+    $("saveSessionBtn").addEventListener("click", saveSession);
+    $("fillSampleBtn").addEventListener("click", fillSample);
+    $("clearBtn").addEventListener("click", clearInput);
+    $("saveApiUrlBtn").addEventListener("click", saveApiUrl);
+    $("photoInput").addEventListener("change", handlePhotoSelect);
+    $("subject").addEventListener("input", rebuildDatalists);
+
+    loadSuggestions();
+  }
+
+  init();
+</script>
+</body>
+</html>

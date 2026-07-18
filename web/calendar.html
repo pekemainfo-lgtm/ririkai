@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReRIKAI - カレンダー</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --fg: #1a1a1a;
+    --bg: #ffffff;
+    --border: #d0d0d0;
+    --accent: #2563eb;
+    --muted: #666;
+    --error: #c0392b;
+    --ok: #1e7e34;
+    --cell-bg: #f7f7f8;
+    --cell-active: #e3edff;
+    --badge-bg: #dbe4ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #eaeaea;
+      --bg: #121212;
+      --border: #444;
+      --accent: #60a5fa;
+      --muted: #aaa;
+      --error: #ff6b6b;
+      --ok: #4ade80;
+      --cell-bg: #1c1c1e;
+      --cell-active: #23324d;
+      --badge-bg: #2a3a5c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 16px;
+    color: var(--fg);
+    background: var(--bg);
+    line-height: 1.5;
+  }
+  h1 { font-size: 1.3rem; }
+  a { color: var(--accent); }
+  .topnav { margin-bottom: 12px; font-size: 0.9rem; }
+  .monthbar { display: flex; align-items: center; justify-content: space-between; margin: 12px 0; }
+  .monthbar button {
+    padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--fg); cursor: pointer; font-size: 1rem;
+  }
+  .monthbar h2 { font-size: 1.1rem; margin: 0; }
+  table.calendar { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  table.calendar th {
+    font-size: 0.8rem; color: var(--muted); padding: 4px 0; font-weight: normal;
+  }
+  table.calendar td {
+    border: 1px solid var(--border); vertical-align: top; height: 74px;
+    padding: 3px; background: var(--cell-bg);
+  }
+  td.empty { background: transparent; border: none; }
+  td.has-data { background: var(--cell-active); cursor: pointer; }
+  .daynum { font-size: 0.8rem; color: var(--muted); }
+  .cell-count { font-size: 0.85rem; font-weight: bold; margin-top: 2px; }
+  .cell-min { font-size: 0.72rem; color: var(--muted); }
+  .cell-badge {
+    display: inline-block; font-size: 0.65rem; background: var(--badge-bg);
+    border-radius: 4px; padding: 0 4px; margin-top: 2px; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .status { margin-top: 12px; white-space: pre-wrap; font-size: 0.9rem; color: var(--muted); }
+  .status.error { color: var(--error); }
+  .view { margin-top: 16px; }
+  .backlink { cursor: pointer; color: var(--accent); font-size: 0.9rem; display: inline-block; margin-bottom: 10px; }
+  .session-item {
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 10px; cursor: pointer;
+  }
+  .session-item:hover { border-color: var(--accent); }
+  .session-item h3 { margin: 0 0 4px; font-size: 1rem; }
+  .session-meta { font-size: 0.8rem; color: var(--muted); }
+  .detail h2 { font-size: 1.05rem; margin: 16px 0 4px; }
+  .detail .transcript {
+    white-space: pre-wrap; background: var(--cell-bg); border-radius: 6px; padding: 10px; font-size: 0.9rem;
+  }
+  .detail ul, .detail ol { margin-top: 4px; }
+  .detail button {
+    margin-top: 14px; padding: 8px 16px; border: none; border-radius: 6px;
+    background: var(--accent); color: #fff; font-size: 0.95rem; cursor: pointer;
+  }
+  details.apibox { margin-bottom: 12px; }
+  #apiUrl { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font-size: 0.8rem; margin-top: 4px; }
+  details.apibox button { margin-top: 8px; padding: 6px 12px; border: none; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <h1>ReRIKAI - カレンダー</h1>
+  <div class="topnav"><a href="session.html">＋ 新規セッション</a></div>
+
+  <details class="apibox">
+    <summary>API接続設定</summary>
+    <label for="apiUrl">API URL</label>
+    <input type="text" id="apiUrl" placeholder="https://xxxx.execute-api.ap-northeast-1.amazonaws.com/api">
+    <button type="button" id="saveApiUrlBtn">保存</button>
+  </details>
+
+  <div class="status" id="status"></div>
+
+  <!-- 月間カレンダービュー -->
+  <div class="view" id="monthView">
+    <div class="monthbar">
+      <button type="button" id="prevMonthBtn">‹ 前月</button>
+      <h2 id="monthLabel"></h2>
+      <button type="button" id="nextMonthBtn">翌月 ›</button>
+    </div>
+    <table class="calendar">
+      <thead>
+        <tr><th>日</th><th>月</th><th>火</th><th>水</th><th>木</th><th>金</th><th>土</th></tr>
+      </thead>
+      <tbody id="calendarBody"></tbody>
+    </table>
+  </div>
+
+  <!-- 日付詳細ビュー -->
+  <div class="view" id="dayView" hidden>
+    <span class="backlink" id="dayBack">‹ カレンダーへ戻る</span>
+    <h2 id="dayLabel"></h2>
+    <div id="daySessions"></div>
+  </div>
+
+  <!-- セッション詳細ビュー -->
+  <div class="view detail" id="sessionView" hidden>
+    <span class="backlink" id="sessionBack">‹ その日の一覧へ戻る</span>
+    <h2 id="sessionTitle"></h2>
+    <div class="session-meta" id="sessionMeta"></div>
+    <div id="sessionBody"></div>
+  </div>
+
+<script src="shared.js"></script>
+<script type="module">
+  import { monthPrefix, buildMonthGrid, aggregateByDate, shiftMonth } from "./calendar-core.mjs";
+
+  const $ = (id) => document.getElementById(id);
+  const now = new Date(Date.now() + 9 * 60 * 60 * 1000); // JST
+  let viewYear = now.getUTCFullYear();
+  let viewMonth = now.getUTCMonth() + 1;
+  let currentAgg = {};
+  let currentDay = null;
+
+  function setStatus(message, type = "") {
+    const el = $("status");
+    el.textContent = message;
+    el.className = "status" + (type ? " " + type : "");
+  }
+
+  function showView(name) {
+    $("monthView").hidden = name !== "month";
+    $("dayView").hidden = name !== "day";
+    $("sessionView").hidden = name !== "session";
+  }
+
+  async function loadMonth() {
+    const ym = monthPrefix(viewYear, viewMonth);
+    $("monthLabel").textContent = `${viewYear}年${viewMonth}月`;
+    setStatus("読み込み中です...", "");
+
+    try {
+      const data = await callApi({ action: "listSessions", yearMonth: ym });
+      currentAgg = aggregateByDate(data.sessions || []);
+      renderCalendar();
+      setStatus("", "");
+    } catch (error) {
+      setStatus(error.message || "読み込みに失敗しました。", "error");
+    }
+  }
+
+  function renderCalendar() {
+    const weeks = buildMonthGrid(viewYear, viewMonth);
+    const tbody = $("calendarBody");
+    tbody.innerHTML = "";
+
+    for (const week of weeks) {
+      const tr = document.createElement("tr");
+      for (const cell of week) {
+        const td = document.createElement("td");
+        if (!cell) {
+          td.className = "empty";
+        } else {
+          const agg = currentAgg[cell.dateStr];
+          td.innerHTML = `<div class="daynum">${cell.day}</div>`;
+          if (agg) {
+            td.className = "has-data";
+            const badges = agg.subjects.slice(0, 2)
+              .map((s) => `<div class="cell-badge">${escapeHtml(s)}</div>`).join("");
+            td.innerHTML += `
+              <div class="cell-count">${agg.count}件</div>
+              <div class="cell-min">${agg.totalMinutes}分</div>
+              ${badges}`;
+            td.addEventListener("click", () => openDay(cell.dateStr));
+          }
+        }
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+  }
+
+  function openDay(dateStr) {
+    currentDay = dateStr;
+    const agg = currentAgg[dateStr];
+    $("dayLabel").textContent = dateStr;
+    const container = $("daySessions");
+    container.innerHTML = "";
+
+    const sessions = (agg?.sessions || []).slice().sort((a, b) =>
+      String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+
+    for (const session of sessions) {
+      const div = document.createElement("div");
+      div.className = "session-item";
+      const judged = session.purposeJudgement?.status
+        ? `｜目的: ${escapeHtml(session.purposeJudgement.status)}` : "";
+      const ambiguous = (session.ambiguousPoints || []).length;
+      const misc = (session.misconceptions || []).length;
+      div.innerHTML = `
+        <h3>${escapeHtml(session.topic || session.subject || "(テーマなし)")}</h3>
+        <div class="session-meta">
+          ${escapeHtml(session.qualification || "")}｜${escapeHtml(session.subject || "")}｜${session.durationMinutes || 0}分${judged}
+          <br>曖昧 ${ambiguous}件・誤解の可能性 ${misc}件${session.sessionStatus !== "completed" ? "｜" + escapeHtml(session.sessionStatus) : ""}
+        </div>`;
+      div.addEventListener("click", () => openSession(session.SK));
+      container.appendChild(div);
+    }
+
+    showView("day");
+  }
+
+  function renderPointList(items) {
+    const list = (items || []);
+    if (list.length === 0) return "<p style='color:var(--muted)'>(なし)</p>";
+    return "<ul>" + list.map((i) => `<li>${escapeHtml(i)}</li>`).join("") + "</ul>";
+  }
+
+  async function openSession(sessionSk) {
+    setStatus("セッションを読み込み中です...", "");
+    try {
+      const data = await callApi({ action: "getSession", sessionSk });
+      const s = data.session;
+      if (!s) throw new Error("セッションが見つかりません。");
+
+      $("sessionTitle").textContent = s.topic || s.subject || "(テーマなし)";
+      $("sessionMeta").textContent =
+        `${s.studyDate}｜${s.qualification || ""}｜${s.subject || ""}｜${s.durationMinutes || 0}分`;
+
+      const judged = s.purposeJudgement?.status
+        ? `${escapeHtml(s.purposeJudgement.status)}（${escapeHtml(s.purposeJudgement.reason || "")}）`
+        : "(判定なし)";
+
+      const confirmQ = (s.confirmQuestions || []);
+      const confirmHtml = confirmQ.length
+        ? "<ol>" + confirmQ.map((q) => `<li>${escapeHtml(q)}</li>`).join("") + "</ol>"
+        : "<p style='color:var(--muted)'>(なし)</p>";
+
+      $("sessionBody").innerHTML = `
+        <h2>今日の目的</h2>
+        <p>${escapeHtml(s.purpose || "(未入力)")}</p>
+        <h2>達成判定</h2>
+        <p>${judged}</p>
+        <h2>自分で分からなかった点</h2>
+        <p>${escapeHtml(s.notUnderstoodNote || "(なし)")}</p>
+        <h2>理解できている点</h2>
+        ${renderPointList(s.understoodPoints)}
+        <h2>曖昧な点</h2>
+        ${renderPointList(s.ambiguousPoints)}
+        <h2>誤解の可能性</h2>
+        ${renderPointList(s.misconceptions)}
+        <h2>確認質問</h2>
+        ${confirmHtml}
+        <h2>復習事項</h2>
+        ${renderPointList(s.reviewItems)}
+        <h2>関連カード</h2>
+        <p style="color:var(--muted)">(カード機能は今後のフェーズで実装)</p>
+        <button type="button" id="viewMarkdownBtn" data-sk="${escapeHtml(sessionSk)}">Markdownを表示</button>
+      `;
+
+      $("viewMarkdownBtn").addEventListener("click", async () => {
+        try {
+          const md = await callApi({ action: "getSessionMarkdown", sessionSk });
+          if (md.url) window.open(md.url, "_blank", "noopener");
+        } catch (error) {
+          setStatus(error.message || "Markdown取得に失敗しました。", "error");
+        }
+      });
+
+      setStatus("", "");
+      showView("session");
+    } catch (error) {
+      setStatus(error.message || "セッションの読み込みに失敗しました。", "error");
+    }
+  }
+
+  $("prevMonthBtn").addEventListener("click", () => {
+    ({ year: viewYear, month: viewMonth } = shiftMonth(viewYear, viewMonth, -1));
+    loadMonth();
+  });
+  $("nextMonthBtn").addEventListener("click", () => {
+    ({ year: viewYear, month: viewMonth } = shiftMonth(viewYear, viewMonth, 1));
+    loadMonth();
+  });
+  $("dayBack").addEventListener("click", () => showView("month"));
+  $("sessionBack").addEventListener("click", () => {
+    if (currentDay) openDay(currentDay); else showView("month");
+  });
+  $("saveApiUrlBtn").addEventListener("click", () => {
+    setApiUrl($("apiUrl").value);
+    setStatus("API URLを保存しました。再読み込みします。", "");
+    loadMonth();
+  });
+
+  $("apiUrl").value = getApiUrl();
+  loadMonth();
+</script>
+</body>
+</html>

@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReRIKAI - 学習セッション</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --fg: #1a1a1a;
+    --bg: #ffffff;
+    --border: #d0d0d0;
+    --accent: #2563eb;
+    --muted: #666;
+    --error: #c0392b;
+    --ok: #1e7e34;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #eaeaea;
+      --bg: #121212;
+      --border: #444;
+      --accent: #60a5fa;
+      --muted: #aaa;
+      --error: #ff6b6b;
+      --ok: #4ade80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 16px;
+    color: var(--fg);
+    background: var(--bg);
+    line-height: 1.6;
+  }
+  h1 { font-size: 1.3rem; }
+  fieldset {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 16px;
+    padding: 12px;
+  }
+  legend { padding: 0 6px; color: var(--muted); font-size: 0.9rem; }
+  label { display: block; margin-top: 10px; font-size: 0.9rem; }
+  input[type="text"], input[type="date"], input[type="number"], textarea {
+    width: 100%;
+    padding: 8px;
+    margin-top: 4px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--fg);
+    font-size: 1rem;
+  }
+  textarea { min-height: 90px; resize: vertical; }
+  #transcript { min-height: 200px; }
+  button {
+    margin-top: 14px;
+    padding: 10px 18px;
+    border: none;
+    border-radius: 6px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 1rem;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .status { margin-top: 12px; white-space: pre-wrap; font-size: 0.9rem; color: var(--muted); }
+  .status.error { color: var(--error); }
+  .status.ok { color: var(--ok); }
+  .result { margin-top: 20px; }
+  .result h2 { font-size: 1.05rem; margin-bottom: 4px; }
+  .result ul { margin-top: 4px; }
+  details { margin-top: 16px; }
+  #apiUrl { font-size: 0.8rem; }
+</style>
+</head>
+<body>
+  <h1>ReRIKAI - 学習セッション</h1>
+  <div style="margin-bottom:12px;font-size:0.9rem;"><a href="calendar.html" style="color:var(--accent)">📅 カレンダーへ</a></div>
+
+  <details>
+    <summary>API接続設定</summary>
+    <label for="apiUrl">API URL</label>
+    <input type="text" id="apiUrl" placeholder="https://xxxx.execute-api.ap-northeast-1.amazonaws.com/api">
+    <button type="button" id="saveApiUrlBtn">保存</button>
+  </details>
+
+  <form id="sessionForm">
+    <fieldset>
+      <legend>基本情報</legend>
+
+      <label for="studyDate">学習日</label>
+      <input type="date" id="studyDate">
+
+      <label for="qualification">資格・コース</label>
+      <input type="text" id="qualification" placeholder="例: AWS SOA-C03">
+
+      <label for="subject">分野（必須）</label>
+      <input type="text" id="subject" placeholder="例: Monitoring" required>
+
+      <label for="topic">テーマ</label>
+      <input type="text" id="topic" placeholder="例: CloudWatchとCloudTrail">
+
+      <label for="durationMinutes">学習時間（分）</label>
+      <input type="number" id="durationMinutes" value="25" min="1">
+    </fieldset>
+
+    <fieldset>
+      <legend>今日の目的・分からなかった点</legend>
+
+      <label for="purpose">今日の目的</label>
+      <textarea id="purpose" placeholder="例: NAT GatewayとInternet Gatewayの違いを説明できるようにする"></textarea>
+
+      <label for="notUnderstoodNote">自分で分からなかった点</label>
+      <textarea id="notUnderstoodNote"></textarea>
+    </fieldset>
+
+    <fieldset>
+      <legend>文字起こし貼り付け欄（必須）</legend>
+      <textarea id="transcript" placeholder="ここにiPhoneの文字起こしや、学習中の独り言を貼ります。" required></textarea>
+    </fieldset>
+
+    <button type="submit" id="saveBtn">保存してAI分析を開始</button>
+  </form>
+
+  <div class="status" id="status"></div>
+
+  <div class="result" id="result" hidden>
+    <h2>今日の目的の達成判定</h2>
+    <p id="purposeJudgement"></p>
+
+    <h2>理解できている点</h2>
+    <ul id="understoodPoints"></ul>
+
+    <h2>曖昧な点</h2>
+    <ul id="ambiguousPoints"></ul>
+
+    <h2>誤解の可能性</h2>
+    <ul id="misconceptions"></ul>
+
+    <h2>確認質問</h2>
+    <ol id="confirmQuestions"></ol>
+
+    <h2>復習事項</h2>
+    <ul id="reviewItems"></ul>
+
+    <button type="button" id="viewMarkdownBtn">Markdownを表示</button>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+  const POLL_INTERVAL_MS = 3000;
+  const POLL_TIMEOUT_MS = 180000;
+
+  const $ = (id) => document.getElementById(id);
+  let isSaving = false;
+  let currentSessionSk = null;
+
+  function todayJst() {
+    const now = new Date();
+    const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+    return jst.toISOString().slice(0, 10);
+  }
+
+  function setStatus(message, type = "") {
+    const el = $("status");
+    el.textContent = message;
+    el.className = "status" + (type ? " " + type : "");
+  }
+
+  function renderList(elId, items) {
+    const el = $(elId);
+    el.innerHTML = "";
+    (items || []).forEach((item) => {
+      const li = document.createElement("li");
+      li.textContent = item;
+      el.appendChild(li);
+    });
+  }
+
+  function renderResult(session) {
+    $("result").hidden = false;
+    $("purposeJudgement").textContent = session.purposeJudgement
+      ? `${session.purposeJudgement.status}（${session.purposeJudgement.reason}）`
+      : "(今日の目的は未入力、または判定なし)";
+    renderList("understoodPoints", session.understoodPoints);
+    renderList("ambiguousPoints", session.ambiguousPoints);
+    renderList("misconceptions", session.misconceptions);
+    renderList("confirmQuestions", session.confirmQuestions);
+    renderList("reviewItems", session.reviewItems);
+  }
+
+  async function pollSession(sessionSk) {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
+      await sleep(POLL_INTERVAL_MS);
+
+      const data = await callApi({ action: "getSession", sessionSk });
+
+      if (data.status === "ok" && data.sessionStatus === "completed") {
+        return data.session;
+      }
+
+      if (data.status === "error") {
+        throw new Error(data.message || "AI分析に失敗しました。");
+      }
+
+      const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+      setStatus(`AI分析中です。経過 ${elapsedSec}秒`, "");
+    }
+
+    throw new Error("AI分析に時間がかかっています。しばらく待ってから再度確認してください。");
+  }
+
+  $("sessionForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (isSaving) return;
+
+    const payload = {
+      action: "createSession",
+      studyDate: $("studyDate").value || todayJst(),
+      qualification: $("qualification").value.trim(),
+      subject: $("subject").value.trim(),
+      topic: $("topic").value.trim(),
+      durationMinutes: Number($("durationMinutes").value || 25),
+      purpose: $("purpose").value.trim(),
+      notUnderstoodNote: $("notUnderstoodNote").value.trim(),
+      transcript: $("transcript").value.trim()
+    };
+
+    if (!payload.transcript) {
+      setStatus("文字起こし欄が空です。", "error");
+      return;
+    }
+    if (!payload.subject) {
+      setStatus("分野を入力してください。", "error");
+      return;
+    }
+
+    isSaving = true;
+    $("saveBtn").disabled = true;
+    $("result").hidden = true;
+    setStatus("保存中です...", "");
+
+    try {
+      const start = await callApi(payload);
+
+      if (start.status !== "processing" || !start.sessionSk) {
+        throw new Error(start.message || "セッションの作成に失敗しました。");
+      }
+
+      currentSessionSk = start.sessionSk;
+      setStatus("AI分析を開始しました。しばらく待ちます。", "");
+
+      const session = await pollSession(start.sessionSk);
+      setStatus("AI分析が完了しました。", "ok");
+      renderResult(session);
+    } catch (error) {
+      setStatus(error.message || "エラーが発生しました。", "error");
+    } finally {
+      isSaving = false;
+      $("saveBtn").disabled = false;
+    }
+  });
+
+  $("viewMarkdownBtn").addEventListener("click", async () => {
+    if (!currentSessionSk) return;
+    try {
+      const data = await callApi({ action: "getSessionMarkdown", sessionSk: currentSessionSk });
+      if (data.url) {
+        window.open(data.url, "_blank", "noopener");
+      }
+    } catch (error) {
+      setStatus(error.message || "Markdownの取得に失敗しました。", "error");
+    }
+  });
+
+  $("saveApiUrlBtn").addEventListener("click", () => {
+    setApiUrl($("apiUrl").value);
+    setStatus("API URLを保存しました。", "ok");
+  });
+
+  $("studyDate").value = todayJst();
+  $("apiUrl").value = getApiUrl();
+</script>
+</body>
+</html>
