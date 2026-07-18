@@ -2,7 +2,7 @@
 
 学習者が自分の言葉で説明し、その説明をAIが分析する学習支援サービス。詳細は `SPEC.md` を参照。
 
-このREADMEはPhase 5（カードの重複統合：重複検出・canonicalAnswer統合・needs_review・手動統合）まで完了時点の内容。
+このREADMEはPhase 6（復習：今日の復習・3段階評価・次回復習日更新・復習履歴）まで完了時点の内容。
 
 ## 画面構成
 
@@ -10,13 +10,14 @@
 |---|---|
 | `web/calendar.html` | 主要画面（CloudFrontのルート）。月間カレンダー → 日付詳細 → セッション詳細 → Markdown表示の3階層 |
 | `web/session.html` | 学習セッションの入力・保存・AI分析・カード候補の採用 |
-| `web/cards.html` | カード一覧・詳細・手動編集 |
+| `web/cards.html` | カード一覧・詳細・手動編集・要確認解決・手動統合 |
+| `web/review.html` | 今日の復習（質問→正解→3段階評価） |
 
 `web/calendar-core.mjs` はカレンダーの純ロジック（月グリッド生成・日別集計）で、ブラウザと `node --test` の両方から使う。
 
 ## APIアクション
 
-`createSession` / `processSessionJob`(内部) / `getSession` / `listSessions` / `getSessionMarkdown` / `adoptCards` / `listCards` / `getCard` / `updateCard` / `checkDuplicates` / `mergeAnswerIntoCard` / `resolveConflict` / `mergeCardsManual` / `health`
+`createSession` / `processSessionJob`(内部) / `getSession` / `listSessions` / `getSessionMarkdown` / `adoptCards` / `listCards` / `getCard` / `updateCard` / `checkDuplicates` / `mergeAnswerIntoCard` / `resolveConflict` / `mergeCardsManual` / `listDueCards` / `reviewCard` / `health`
 
 ## 構成
 
@@ -113,7 +114,11 @@ Front Matter（YAML）＋ 本文（今日の目的／自分で分からなかっ
 - カード候補はAI分析と同時（`processSessionJob`内）に生成され、SESSIONアイテムに保存。利用者が `session.html` で採用/編集/不採用を選び、採用分だけ `adoptCards` でCARD#として保存する（全件自動登録はしない：§13）
 - カード↔セッションの関連はDynamoDBのみで保持（`session.cardIds` と `card.sourceSessionIds`）。S3のMarkdownは生成時のまま書き換えない（§3.2/§26）
 - 手動編集したカードは `answerSource=user`（§14）
-- `review.nextReviewDate` は採用時に翌日で初期化。実際の復習フロー（できた/あやしい/できなかった → 次回復習日更新）はPhase 6
+- `review.nextReviewDate` は採用時に翌日で初期化。復習フロー（Phase 6）が `review` 集計と次回日を更新する
+
+### DynamoDB復習履歴アイテム（§16.4）
+
+`SK=REVIEW#{reviewId}`。`cardId`・`result`(correct/uncertain/incorrect)・`reviewedAt`・`previousNextReviewDate`・`newNextReviewDate`。reviewId は冪等性キー（二重送信で二重加算しない）。
 
 ## カレンダーの集計（Phase 3）
 
@@ -126,16 +131,22 @@ Front Matter（YAML）＋ 本文（今日の目的／自分で分からなかっ
 - 回答統合（`mergeAnswerIntoCard`→`integrateAnswer`）：回答が正規化一致なら補足だけ統合し既存回答を維持。**回答が異なる／既存がユーザー編集済みなら needs_review**（自動確定しない・§11.4/§14）。新回答は `pendingAnswer` に退避
 - needs_review は `cards.html` で利用者が確定（`resolveConflict`）。過去のMarkdownは書き換えない
 - 手動統合（`mergeCardsManual`→`mergeCardData`）：source を target に吸収（sourceSessionIds/supplement をunion、review集計を合算）、source は `status=merged`・`mergedIntoCardId` を保持（§15）
-- 復習スケジュール（できた/あやしい/できなかった → 次回復習日）はPhase 6で実装予定（SPEC.md §16）
+
+## 復習日計算ルール（Phase 6・§16）
+
+- 評価は3段階（できた=`correct` / あやしい=`uncertain` / できなかった=`incorrect`）
+- 次回復習日（`computeNextReviewDate`、独立した純関数で後から変更しやすい）：できた=+7日 / あやしい=+3日 / できなかった=翌日。新規カードは採用時に翌日で初期化（§16.2）
+- `listDueCards` が `nextReviewDate <= 今日(JST)` の有効カードを返し、`review.html` が1枚ずつ提示。評価は `reviewCard` で記録し `applyReview` が review 集計と次回日を更新
+- **復習履歴**：`SK=REVIEW#{reviewId}` に1件ずつ保存（result・reviewedAt・previousNextReviewDate・newNextReviewDate、§16.4）。カード本体の `review` カウントにも反映
+- **冪等性**：フロントがカード提示ごとに `reviewId` を発行。バックエンドは履歴を条件付きPut（`putNewItem`）し、二重送信時は加算せず `duplicate:true` を返す（§23.6）
 
 ## 将来Apple Speechを接続する場所
 
 `createSession` action は `transcript` という共通の文字列だけを受け取る設計にしている（SPEC.md §2.3）。将来Apple Speech経由の文字起こしを追加する場合、`transcript` を生成する経路を追加するだけでよく、`processSessionJob` 以降のAI分析・Markdown生成・保存処理は変更不要。
 
-## 現在未実装の機能（Phase 5完了時点）
+## 現在未実装の機能（Phase 6完了時点）
 
-- 復習機能（できた/あやしい/できなかった・次回復習日更新・復習履歴）（Phase 6）
 - ノート写真アップロード（Phase 7）
-- カレンダーの新規カード数・復習予定数・要確認数（Phase 6の実装後に対応）
+- カレンダーの新規カード数・復習予定数・要確認数（カレンダーへの集計表示。データは揃っているので表示追加のみ）
 - understandingScore（精度未検証のため意図的に省略。§28.7）
-- 二重送信に対する冪等性はフロントの送信ボタン無効化のみ（強い冪等性制御は未実装）
+- セッション保存の二重送信に対する冪等性はフロントの送信ボタン無効化のみ（復習の二重加算はサーバ側で防止済み）

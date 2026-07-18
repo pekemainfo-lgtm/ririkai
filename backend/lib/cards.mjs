@@ -245,3 +245,44 @@ export function mergeCardData(target, source, now = new Date().toISOString()) {
 
   return { target: mergedTarget, source: mergedSource };
 }
+
+// --- Phase 6: 復習 ---
+
+export const REVIEW_RESULTS = new Set(["correct", "uncertain", "incorrect"]);
+
+export function isReviewResult(value) {
+  return REVIEW_RESULTS.has(String(value || ""));
+}
+
+// 評価から次回復習日を計算する（§16.2）。ルール変更に備え独立関数にしている。
+// できた(correct)=+7日 / あやしい(uncertain)=+3日 / できなかった(incorrect)=翌日。
+export function computeNextReviewDate(result, nowIso = new Date().toISOString()) {
+  const offset = result === "correct" ? 7 : result === "uncertain" ? 3 : 1;
+  return jstDateWithOffset(nowIso, offset);
+}
+
+// カードのreviewサブオブジェクトに評価を反映する（§16）。カード本体は変更せずreviewだけ返す。
+export function applyReview(card, result, nowIso = new Date().toISOString()) {
+  const prev = card?.review || {};
+  const previousNextReviewDate = prev.nextReviewDate || null;
+  const newNextReviewDate = computeNextReviewDate(result, nowIso);
+
+  const num = (v) => Number(v || 0);
+  const masteryLevel = result === "correct"
+    ? Math.min(num(prev.masteryLevel) + 1, 5)
+    : result === "incorrect"
+      ? 0
+      : num(prev.masteryLevel);
+
+  const review = {
+    lastReviewedAt: nowIso,
+    nextReviewDate: newNextReviewDate,
+    reviewCount: num(prev.reviewCount) + 1,
+    correctCount: num(prev.correctCount) + (result === "correct" ? 1 : 0),
+    uncertainCount: num(prev.uncertainCount) + (result === "uncertain" ? 1 : 0),
+    incorrectCount: num(prev.incorrectCount) + (result === "incorrect" ? 1 : 0),
+    masteryLevel
+  };
+
+  return { review, previousNextReviewDate, newNextReviewDate };
+}

@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReRIKAI - 復習</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --fg: #1a1a1a; --bg: #ffffff; --border: #d0d0d0; --accent: #2563eb;
+    --muted: #666; --error: #c0392b; --ok: #1e7e34; --cell-bg: #f7f7f8;
+    --good: #1e7e34; --uncertain: #b7791f; --bad: #c0392b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #eaeaea; --bg: #121212; --border: #444; --accent: #60a5fa;
+      --muted: #aaa; --error: #ff6b6b; --ok: #4ade80; --cell-bg: #1c1c1e;
+      --good: #4ade80; --uncertain: #eab308; --bad: #ff6b6b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    max-width: 640px; margin: 0 auto; padding: 16px; color: var(--fg); background: var(--bg); line-height: 1.6;
+  }
+  h1 { font-size: 1.3rem; }
+  a { color: var(--accent); }
+  .topnav { margin-bottom: 12px; font-size: 0.9rem; }
+  .status { margin-top: 12px; white-space: pre-wrap; font-size: 0.9rem; color: var(--muted); }
+  .status.error { color: var(--error); }
+  .status.ok { color: var(--ok); }
+  .progress { font-size: 0.85rem; color: var(--muted); margin-bottom: 8px; }
+  .card {
+    border: 1px solid var(--border); border-radius: 10px; padding: 18px; margin-top: 10px;
+  }
+  .card .qtype { font-size: 0.7rem; background: var(--border); border-radius: 4px; padding: 1px 6px; }
+  .card .question { font-size: 1.15rem; font-weight: bold; margin: 10px 0; }
+  .card .answer { background: var(--cell-bg); border-radius: 8px; padding: 12px; margin-top: 8px; }
+  .card .answer h3 { margin: 0 0 4px; font-size: 0.85rem; color: var(--muted); }
+  .card .supplement { font-size: 0.9rem; margin-top: 8px; }
+  button {
+    padding: 10px 16px; border: none; border-radius: 6px; color: #fff; font-size: 1rem; cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #showAnswerBtn { background: var(--accent); margin-top: 12px; width: 100%; }
+  .grade-buttons { display: flex; gap: 8px; margin-top: 14px; }
+  .grade-buttons button { flex: 1; }
+  .btn-good { background: var(--good); }
+  .btn-uncertain { background: var(--uncertain); }
+  .btn-bad { background: var(--bad); }
+  details.apibox { margin-bottom: 12px; }
+  #apiUrl { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font-size: 0.8rem; margin-top: 4px; }
+  details.apibox button { margin-top: 8px; background: var(--accent); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <h1>ReRIKAI - 今日の復習</h1>
+  <div class="topnav">
+    <a href="calendar.html">📅 カレンダー</a>
+    ｜<a href="cards.html">🗂 カード一覧</a>
+    ｜<a href="session.html">＋ 新規セッション</a>
+  </div>
+
+  <details class="apibox">
+    <summary>API接続設定</summary>
+    <label for="apiUrl">API URL</label>
+    <input type="text" id="apiUrl" placeholder="https://xxxx.execute-api.ap-northeast-1.amazonaws.com/api">
+    <button type="button" id="saveApiUrlBtn">保存</button>
+  </details>
+
+  <div class="status" id="status"></div>
+  <div class="progress" id="progress"></div>
+
+  <div class="card" id="cardArea" hidden>
+    <span class="qtype" id="qtype"></span>
+    <div class="question" id="question"></div>
+    <button type="button" id="showAnswerBtn">答えを見る</button>
+
+    <div class="answer" id="answerArea" hidden>
+      <h3>正解</h3>
+      <div id="answer"></div>
+      <div class="supplement" id="supplement"></div>
+      <div class="grade-buttons">
+        <button type="button" class="btn-good" data-result="correct">できた</button>
+        <button type="button" class="btn-uncertain" data-result="uncertain">あやしい</button>
+        <button type="button" class="btn-bad" data-result="incorrect">できなかった</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="doneArea" hidden>
+    <p class="status ok" id="doneMsg"></p>
+    <p><a href="calendar.html">カレンダーへ戻る</a></p>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  let queue = [];
+  let index = 0;
+  let currentReviewId = null;
+  let submitting = false;
+
+  function setStatus(message, type = "") {
+    $("status").textContent = message;
+    $("status").className = "status" + (type ? " " + type : "");
+  }
+
+  function newReviewId() {
+    return "review_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  }
+
+  const RESULT_LABEL = { correct: "できた", uncertain: "あやしい", incorrect: "できなかった" };
+
+  async function loadDue() {
+    setStatus("今日の復習カードを読み込み中です...", "");
+    try {
+      const data = await callApi({ action: "listDueCards" });
+      queue = data.cards || [];
+      index = 0;
+      if (queue.length === 0) {
+        setStatus("", "");
+        $("progress").textContent = "";
+        $("cardArea").hidden = true;
+        $("doneArea").hidden = false;
+        $("doneMsg").textContent = "今日の復習はありません。お疲れさまでした。";
+        return;
+      }
+      setStatus(`${queue.length}枚の復習があります。`, "");
+      showCard();
+    } catch (error) {
+      setStatus(error.message || "読み込みに失敗しました。", "error");
+    }
+  }
+
+  function showCard() {
+    if (index >= queue.length) {
+      $("cardArea").hidden = true;
+      $("doneArea").hidden = false;
+      $("progress").textContent = "";
+      setStatus("", "");
+      $("doneMsg").textContent = `復習完了！ ${queue.length}枚を記録しました。次回復習日が更新されました。`;
+      return;
+    }
+    const card = queue[index];
+    currentReviewId = newReviewId();
+    $("progress").textContent = `${index + 1} / ${queue.length}`;
+    $("qtype").textContent = card.cardType || "";
+    $("question").textContent = card.question || "";
+    $("answer").textContent = card.canonicalAnswer || "";
+    const sup = (card.supplement || []);
+    $("supplement").innerHTML = sup.length
+      ? "<ul>" + sup.map((s) => `<li>${escapeHtml(s)}</li>`).join("") + "</ul>" : "";
+    $("answerArea").hidden = true;
+    $("cardArea").hidden = false;
+    $("doneArea").hidden = true;
+  }
+
+  async function grade(result) {
+    if (submitting) return;
+    const card = queue[index];
+    submitting = true;
+    setGradeDisabled(true);
+    setStatus(`「${RESULT_LABEL[result]}」を記録中です...`, "");
+    try {
+      await callApi({ action: "reviewCard", cardId: card.cardId, result, reviewId: currentReviewId });
+      index++;
+      setStatus("", "");
+      showCard();
+    } catch (error) {
+      setStatus(error.message || "記録に失敗しました。もう一度お試しください。", "error");
+    } finally {
+      submitting = false;
+      setGradeDisabled(false);
+    }
+  }
+
+  function setGradeDisabled(disabled) {
+    document.querySelectorAll(".grade-buttons button").forEach((b) => { b.disabled = disabled; });
+  }
+
+  $("showAnswerBtn").addEventListener("click", () => { $("answerArea").hidden = false; });
+  document.querySelectorAll(".grade-buttons button").forEach((btn) => {
+    btn.addEventListener("click", () => grade(btn.dataset.result));
+  });
+  $("saveApiUrlBtn").addEventListener("click", () => {
+    setApiUrl($("apiUrl").value);
+    setStatus("API URLを保存しました。再読み込みします。", "");
+    loadDue();
+  });
+
+  $("apiUrl").value = getApiUrl();
+  loadDue();
+</script>
+</body>
+</html>

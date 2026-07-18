@@ -1,5 +1,5 @@
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
-import { putItem, getItem, queryByPrefix, USER_ID } from "./lib/dynamo.mjs";
+import { putItem, putNewItem, getItem, queryByPrefix, USER_ID } from "./lib/dynamo.mjs";
 import { toJstDate } from "./lib/dates.mjs";
 import { validateCreateSessionInput } from "./lib/validate.mjs";
 import { buildSessionMarkdown } from "./lib/markdown.mjs";
@@ -11,7 +11,9 @@ import {
   normalizeQuestion,
   findDuplicateCards,
   integrateAnswer,
-  mergeCardData
+  mergeCardData,
+  isReviewResult,
+  applyReview
 } from "./lib/cards.mjs";
 import { sessionMarkdownKey, putSessionMarkdown, getSessionMarkdownUrl, DATA_BUCKET } from "./lib/storage.mjs";
 
@@ -563,6 +565,71 @@ async function mergeCardsManual(body) {
   return jsonResponse(200, { status: "ok", card: mergedTarget });
 }
 
+// 復習予定日が到来した有効カードを返す（§23.6）。
+async function listDueCards(body) {
+  const today = toJstDate(new Date().toISOString());
+  const items = await queryByPrefix("CARD#", { limit: 500, scanIndexForward: false });
+
+  const due = items
+    .filter((c) => c.status === "active" && c.review?.nextReviewDate && c.review.nextReviewDate <= today)
+    .sort((a, b) => String(a.review.nextReviewDate).localeCompare(String(b.review.nextReviewDate)));
+
+  return jsonResponse(200, { status: "ok", today, cards: due });
+}
+
+// カードを復習評価する（§16）。reviewId で二重加算を防ぐ（§23.6 冪等性）。
+// body: { cardId, result, reviewId }
+async function reviewCard(body) {
+  const cardId = String(body.cardId || "").trim();
+  const result = String(body.result || "").trim();
+  const reviewId = String(body.reviewId || "").trim();
+
+  if (!cardId) {
+    return jsonResponse(400, { status: "error", errorCode: "NO_CARD_ID", message: "cardId is required" });
+  }
+  if (!isReviewResult(result)) {
+    return jsonResponse(400, { status: "error", errorCode: "INVALID_RESULT", message: "result が不正です。" });
+  }
+  if (!reviewId) {
+    return jsonResponse(400, { status: "error", errorCode: "NO_REVIEW_ID", message: "reviewId is required" });
+  }
+
+  const card = await getItem(`CARD#${cardId}`);
+  if (!card) {
+    return jsonResponse(404, { status: "error", errorCode: "CARD_NOT_FOUND", message: "card not found" });
+  }
+
+  const now = new Date().toISOString();
+  const { review, previousNextReviewDate, newNextReviewDate } = applyReview(card, result, now);
+
+  const historyItem = {
+    PK: `USER#${USER_ID}`,
+    SK: `REVIEW#${reviewId}`,
+    type: "REVIEW",
+    reviewId,
+    cardId,
+    result,
+    reviewedAt: now,
+    previousNextReviewDate,
+    newNextReviewDate
+  };
+
+  // 履歴を条件付きPut。既に同じreviewIdがあれば二重送信なので加算しない。
+  try {
+    await putNewItem(historyItem);
+  } catch (error) {
+    if (error?.name === "ConditionalCheckFailedException") {
+      return jsonResponse(200, { status: "ok", duplicate: true, card });
+    }
+    throw error;
+  }
+
+  const updatedCard = { ...card, review, updatedAt: now };
+  await putItem(updatedCard);
+
+  return jsonResponse(200, { status: "ok", card: updatedCard, history: historyItem });
+}
+
 async function getCard(body) {
   const cardId = String(body.cardId || "").trim();
   if (!cardId) {
@@ -699,6 +766,14 @@ export const handler = async (event) => {
 
     if (action === "mergeCardsManual") {
       return await mergeCardsManual(body);
+    }
+
+    if (action === "listDueCards") {
+      return await listDueCards(body);
+    }
+
+    if (action === "reviewCard") {
+      return await reviewCard(body);
     }
 
     if (action === "getSessionMarkdown") {

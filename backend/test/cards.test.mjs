@@ -9,7 +9,10 @@ import {
   normalizeCardCandidates,
   findDuplicateCards,
   integrateAnswer,
-  mergeCardData
+  mergeCardData,
+  computeNextReviewDate,
+  applyReview,
+  isReviewResult
 } from "../lib/cards.mjs";
 
 test("normalizeQuestion: 表記ゆれ（空白・句読点・大小）を吸収する", () => {
@@ -187,4 +190,58 @@ test("mergeCardData: sourceを吸収しreview集計合算・source merged（§15
   assert.equal(t.createdAt, "2026-07-10T00:00:00.000Z"); // 早い方
   assert.equal(s.status, "merged");
   assert.equal(s.mergedIntoCardId, "card_def");
+});
+
+// --- Phase 6: 復習 ---
+
+test("isReviewResult: 妥当/不当", () => {
+  assert.equal(isReviewResult("correct"), true);
+  assert.equal(isReviewResult("uncertain"), true);
+  assert.equal(isReviewResult("incorrect"), true);
+  assert.equal(isReviewResult("bogus"), false);
+  assert.equal(isReviewResult(""), false);
+});
+
+test("computeNextReviewDate: できた=+7/あやしい=+3/できなかった=+1（JST基準）", () => {
+  // UTC 2026-07-18T00:00Z = JST 09:00
+  assert.equal(computeNextReviewDate("correct", "2026-07-18T00:00:00.000Z"), "2026-07-25");
+  assert.equal(computeNextReviewDate("uncertain", "2026-07-18T00:00:00.000Z"), "2026-07-21");
+  assert.equal(computeNextReviewDate("incorrect", "2026-07-18T00:00:00.000Z"), "2026-07-19");
+  // 未知resultは+1にフォールバック
+  assert.equal(computeNextReviewDate("bogus", "2026-07-18T00:00:00.000Z"), "2026-07-19");
+});
+
+test("computeNextReviewDate: JST日付境界（UTC15時=JST翌日0時）", () => {
+  // UTC 2026-07-17T15:00Z = JST 2026-07-18 00:00 → correctで+7 = 07-25
+  assert.equal(computeNextReviewDate("correct", "2026-07-17T15:00:00.000Z"), "2026-07-25");
+});
+
+test("applyReview: correctでカウント++・次回日+7・masteryLevel+1・prev/new捕捉", () => {
+  const card = {
+    review: { reviewCount: 1, correctCount: 0, uncertainCount: 1, incorrectCount: 0, masteryLevel: 2, nextReviewDate: "2026-07-18" }
+  };
+  const { review, previousNextReviewDate, newNextReviewDate } = applyReview(card, "correct", "2026-07-18T00:00:00.000Z");
+  assert.equal(review.reviewCount, 2);
+  assert.equal(review.correctCount, 1);
+  assert.equal(review.uncertainCount, 1); // 変わらない
+  assert.equal(review.masteryLevel, 3);
+  assert.equal(review.lastReviewedAt, "2026-07-18T00:00:00.000Z");
+  assert.equal(review.nextReviewDate, "2026-07-25");
+  assert.equal(previousNextReviewDate, "2026-07-18");
+  assert.equal(newNextReviewDate, "2026-07-25");
+});
+
+test("applyReview: incorrectでmasteryLevel=0・次回翌日", () => {
+  const card = { review: { reviewCount: 3, incorrectCount: 1, masteryLevel: 4, nextReviewDate: "2026-07-18" } };
+  const { review } = applyReview(card, "incorrect", "2026-07-18T00:00:00.000Z");
+  assert.equal(review.incorrectCount, 2);
+  assert.equal(review.masteryLevel, 0);
+  assert.equal(review.nextReviewDate, "2026-07-19");
+});
+
+test("applyReview: reviewが未定義でも初期値から動く", () => {
+  const { review } = applyReview({}, "uncertain", "2026-07-18T00:00:00.000Z");
+  assert.equal(review.reviewCount, 1);
+  assert.equal(review.uncertainCount, 1);
+  assert.equal(review.nextReviewDate, "2026-07-21");
 });

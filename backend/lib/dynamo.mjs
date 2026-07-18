@@ -12,6 +12,16 @@ export async function putItem(item) {
   await docClient.send(new PutCommand({ TableName: TABLE_NAME, Item: item }));
 }
 
+// 同一キーのアイテムが存在しない場合のみ書き込む（冪等性用）。
+// 既に存在すると ConditionalCheckFailedException を投げる（呼び出し側で捕捉）。
+export async function putNewItem(item) {
+  await docClient.send(new PutCommand({
+    TableName: TABLE_NAME,
+    Item: item,
+    ConditionExpression: "attribute_not_exists(PK)"
+  }));
+}
+
 export async function getItem(sk) {
   const result = await docClient.send(
     new GetCommand({
