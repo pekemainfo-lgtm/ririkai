@@ -19,6 +19,7 @@ function frontMatter(session) {
     `sessionId: ${yamlScalar(session.sessionId)}`,
     `userId: ${yamlScalar(session.userId)}`,
     `studyDate: ${session.studyDate}`,
+    `mode: ${yamlScalar(session.mode || "input")}`,
     `qualification: ${yamlScalar(session.qualification)}`,
     `subject: ${yamlScalar(session.subject)}`,
     `topic: ${yamlScalar(session.topic)}`,
@@ -31,6 +32,16 @@ function frontMatter(session) {
     "---"
   ];
   return lines.join("\n");
+}
+
+const MODE_LABELS = {
+  input: "インプット（頭に入れる段階）",
+  practice: "演習（初回〜数回）",
+  fast: "高速周回（最後の詰め）"
+};
+
+function modeLabel(mode) {
+  return MODE_LABELS[mode] || MODE_LABELS.input;
 }
 
 function bulletList(items) {
@@ -54,6 +65,8 @@ export function buildSessionMarkdown(session) {
 
   const body = [
     `# ${session.topic || session.subject}`,
+    "",
+    `> モード: ${modeLabel(session.mode)}`,
     "",
     purposeSection,
     "## 自分で分からなかった点",

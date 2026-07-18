@@ -13,7 +13,9 @@ import {
   integrateAnswer,
   mergeCardData,
   isReviewResult,
-  applyReview
+  applyReview,
+  sanitizeStudyMode,
+  sortSupplementByMode
 } from "./lib/cards.mjs";
 import { sessionMarkdownKey, putSessionMarkdown, getSessionMarkdownUrl, getSessionMarkdownContent, createNoteUploadUrl, getNoteImageViewUrl, DATA_BUCKET } from "./lib/storage.mjs";
 import { replaceNoteImagesInFrontMatter } from "./lib/markdown.mjs";
@@ -108,6 +110,7 @@ async function createSession(body) {
   const notUnderstoodNote = String(body.notUnderstoodNote || "").trim();
   const transcript = String(body.transcript || "").trim();
   const generateCards = body.generateCards !== false;
+  const mode = sanitizeStudyMode(body.mode);
 
   // クライアント指定のノートキーは自ユーザ配下のものだけ受理する（§28.3/§23.8）。最大10枚（§8.4）。
   const noteImages = (Array.isArray(body.noteImages) ? body.noteImages : [])
@@ -122,6 +125,7 @@ async function createSession(body) {
     sessionId,
     userId: USER_ID,
     studyDate,
+    mode,
     qualification,
     subject,
     topic,
@@ -153,6 +157,7 @@ async function createSession(body) {
     sessionSk,
     sessionId,
     input: {
+      mode,
       qualification,
       subject,
       topic,
@@ -247,6 +252,7 @@ async function processSessionJob(body) {
       sessionId: session.sessionId,
       userId: USER_ID,
       studyDate: session.studyDate,
+      mode: session.mode,
       qualification: session.qualification,
       subject: session.subject,
       topic: session.topic,
@@ -414,6 +420,7 @@ async function adoptCards(body) {
       supplement: card.supplement,
       sourceSessionId: session.sessionId,
       answerSource: card.answerSource === "user" ? "user" : "ai",
+      mode: session.mode,
       now
     });
 
@@ -488,21 +495,30 @@ async function mergeAnswerIntoCard(body) {
   }
 
   const sourceSessionId = String(body.sourceSessionId || "").trim();
-  const { result, card: updated } = integrateAnswer(card, answer, body.supplement, sourceSessionId);
+
+  // 統合先セッションのモードを先に取得し、追加される補足へ由来モードを付ける（§Phase 9）。
+  const sessionSk = String(body.sessionSk || "").trim();
+  const session = sessionSk ? await getItem(sessionSk) : null;
+
+  const { result, card: updated } = integrateAnswer(
+    card,
+    answer,
+    body.supplement,
+    sourceSessionId,
+    new Date().toISOString(),
+    session?.mode
+  );
 
   await putItem(updated);
 
   // セッションとの相互参照（このカードを当該セッションに紐づける）。
   // SESSIONアイテムのSKは createdAt ベースなので、フロントから sessionSk を渡せた場合のみ追記する。
-  if (body.sessionSk) {
-    const session = await getItem(String(body.sessionSk).trim());
-    if (session && !(session.cardIds || []).includes(cardId)) {
-      await putItem({
-        ...session,
-        cardIds: [...(session.cardIds || []), cardId],
-        updatedAt: new Date().toISOString()
-      });
-    }
+  if (session && !(session.cardIds || []).includes(cardId)) {
+    await putItem({
+      ...session,
+      cardIds: [...(session.cardIds || []), cardId],
+      updatedAt: new Date().toISOString()
+    });
   }
 
   return jsonResponse(200, { status: "ok", result, card: updated });
@@ -583,7 +599,9 @@ async function listDueCards(body) {
 
   const due = items
     .filter((c) => c.status === "active" && !c.review?.mastered && c.review?.nextReviewDate && c.review.nextReviewDate <= today)
-    .sort((a, b) => String(a.review.nextReviewDate).localeCompare(String(b.review.nextReviewDate)));
+    .sort((a, b) => String(a.review.nextReviewDate).localeCompare(String(b.review.nextReviewDate)))
+    // 答え面の補足を由来モード順（高速周回→インプット→演習）に並べ替えて返す（表示専用・保存は不変）。
+    .map((c) => ({ ...c, supplement: sortSupplementByMode(c.supplement, c.supplementModes) }));
 
   return jsonResponse(200, { status: "ok", today, cards: due });
 }
@@ -639,6 +657,44 @@ async function reviewCard(body) {
   await putItem(updatedCard);
 
   return jsonResponse(200, { status: "ok", card: updatedCard, history: historyItem });
+}
+
+// 「リリカイ!（mastered）」で復習から外したカードの一覧を返す（§Phase 9：復帰の導線）。
+async function listMasteredCards(body) {
+  const items = await queryByPrefix("CARD#", { limit: 500, scanIndexForward: false });
+  const cards = items.filter((c) => c.status === "active" && c.review?.mastered);
+  return jsonResponse(200, { status: "ok", cards });
+}
+
+// リリカイ済みカードを復習へ戻す（§Phase 9）。mastered を解除し次回復習日を今日にして当日の復習へ出す。
+// 履歴カウント（reviewCount 等）は維持する。body: { cardId }
+async function reactivateCard(body) {
+  const cardId = String(body.cardId || "").trim();
+  if (!cardId) {
+    return jsonResponse(400, { status: "error", errorCode: "NO_CARD_ID", message: "cardId is required" });
+  }
+
+  const card = await getItem(`CARD#${cardId}`);
+  if (!card) {
+    return jsonResponse(404, { status: "error", errorCode: "CARD_NOT_FOUND", message: "card not found" });
+  }
+
+  const now = new Date().toISOString();
+  const today = toJstDate(now);
+  const updated = {
+    ...card,
+    status: "active",
+    review: {
+      ...(card.review || {}),
+      mastered: false,
+      nextReviewDate: today
+    },
+    updatedAt: now
+  };
+
+  await putItem(updated);
+
+  return jsonResponse(200, { status: "ok", card: updated });
 }
 
 async function getCard(body) {
@@ -875,6 +931,14 @@ export const handler = async (event) => {
 
     if (action === "reviewCard") {
       return await reviewCard(body);
+    }
+
+    if (action === "listMasteredCards") {
+      return await listMasteredCards(body);
+    }
+
+    if (action === "reactivateCard") {
+      return await reactivateCard(body);
     }
 
     if (action === "getSessionMarkdown") {

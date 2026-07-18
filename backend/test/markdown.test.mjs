@@ -41,6 +41,16 @@ test("Front Matterに主要フィールドが出力される", () => {
   assert.match(md, /noteImages: \[\]/);
 });
 
+test("Front Matterと本文にモードが出力される（未指定はinput）", () => {
+  const md = buildSessionMarkdown(baseSession({ mode: "fast" }));
+  assert.match(md, /mode: fast/);
+  assert.match(md, /> モード: 高速周回/);
+  // 未指定は input にフォールバック
+  const md2 = buildSessionMarkdown(baseSession());
+  assert.match(md2, /mode: input/);
+  assert.match(md2, /> モード: インプット/);
+});
+
 test("生の文字起こしと表記を整えた文字起こしが両方そのまま含まれる(意味の書き換えがない)", () => {
   const session = baseSession();
   const md = buildSessionMarkdown(session);

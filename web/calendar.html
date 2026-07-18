@@ -291,9 +291,10 @@
       const s = data.session;
       if (!s) throw new Error("セッションが見つかりません。");
 
+      const MODE_LABELS = { input: "インプット", practice: "演習", fast: "高速周回" };
       $("sessionTitle").textContent = s.topic || s.subject || "(テーマなし)";
       $("sessionMeta").textContent =
-        `${s.studyDate}｜${s.qualification || ""}｜${s.subject || ""}｜${s.durationMinutes || 0}分`;
+        `${s.studyDate}｜${MODE_LABELS[s.mode] || MODE_LABELS.input}｜${s.qualification || ""}｜${s.subject || ""}｜${s.durationMinutes || 0}分`;
 
       const judged = s.purposeJudgement?.status
         ? `${escapeHtml(s.purposeJudgement.status)}（${escapeHtml(s.purposeJudgement.reason || "")}）`

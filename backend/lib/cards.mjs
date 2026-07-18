@@ -35,6 +35,17 @@ export function sanitizeCardType(value) {
   return VALID_CARD_TYPES.has(v) ? v : "definition";
 }
 
+// 学習モード（§Phase 9）。input=インプット/頭に入れる、practice=演習、fast=高速周回。
+export const STUDY_MODES = new Set(["input", "practice", "fast"]);
+
+// 復習カードの答え面で補足を並べる優先度：高速周回(注意点)→インプット(基礎)→演習(手厚い補足)。
+export const MODE_PRIORITY = { fast: 0, input: 1, practice: 2 };
+
+export function sanitizeStudyMode(value) {
+  const v = String(value || "").trim();
+  return STUDY_MODES.has(v) ? v : "input";
+}
+
 function toSupplement(value, max = 8) {
   if (!Array.isArray(value)) return [];
   return value.map((x) => String(x || "").trim()).filter(Boolean).slice(0, max);
@@ -54,9 +65,12 @@ export function buildCardItem({
   supplement = [],
   sourceSessionId = "",
   answerSource = "ai",
+  mode = "input",
   now = new Date().toISOString()
 }) {
   const nextReviewDate = jstDateWithOffset(now, 1);
+  const supplementArr = toSupplement(supplement);
+  const cardMode = sanitizeStudyMode(mode);
 
   return {
     PK: `USER#${userId}`,
@@ -71,7 +85,10 @@ export function buildCardItem({
     question: String(question || "").trim(),
     normalizedQuestion: normalizeQuestion(question),
     canonicalAnswer: String(canonicalAnswer || "").trim(),
-    supplement: toSupplement(supplement),
+    supplement: supplementArr,
+    // 各補足行の由来モード（supplement と同じ長さ・順序）。表示順の並べ替えに使う。
+    supplementModes: supplementArr.map(() => cardMode),
+    mode: cardMode,
     sourceSessionIds: sourceSessionId ? [sourceSessionId] : [],
     answerSource: answerSource === "user" ? "user" : "ai",
     status: "active",
@@ -142,6 +159,56 @@ function unionStrings(a, b, max = 12) {
   return result;
 }
 
+// モード付き補足リストを順に重複除去で結合し、supplement と supplementModes を整列させて返す。
+// entries: [{ supplement: string[], modes: string[] }, ...]。各行のモードはその行由来のものを維持する。
+function mergeSupplementLists(entries, max = 12) {
+  const seen = new Set();
+  const supplement = [];
+  const supplementModes = [];
+  for (const entry of entries) {
+    const sup = Array.isArray(entry?.supplement) ? entry.supplement : [];
+    const modes = Array.isArray(entry?.modes) ? entry.modes : [];
+    for (let i = 0; i < sup.length; i++) {
+      if (supplement.length >= max) break;
+      const s = String(sup[i] || "").trim();
+      if (!s || seen.has(s)) continue;
+      seen.add(s);
+      supplement.push(s);
+      supplementModes.push(sanitizeStudyMode(modes[i]));
+    }
+  }
+  return { supplement, supplementModes };
+}
+
+// 既存補足（モード付き）に、単一モードの新規補足を結合する。既存行のモードは維持し新規行に incomingMode を付与。
+function unionSupplementWithModes(existSup, existModes, incomingSup, incomingMode, max = 12) {
+  const mode = sanitizeStudyMode(incomingMode);
+  const inc = Array.isArray(incomingSup) ? incomingSup : [];
+  return mergeSupplementLists(
+    [
+      { supplement: existSup, modes: existModes },
+      { supplement: inc, modes: inc.map(() => mode) }
+    ],
+    max
+  );
+}
+
+// 補足を由来モード順（fast→input→practice→未知）に安定ソートして返す（表示専用・保存データは変えない）。
+// supplementModes が無い/長さ不一致の旧カードは並べ替えず元順を返す（後方互換）。
+export function sortSupplementByMode(supplement, supplementModes) {
+  const sup = Array.isArray(supplement) ? supplement : [];
+  const modes = Array.isArray(supplementModes) ? supplementModes : [];
+  if (modes.length !== sup.length) return sup.slice();
+  const priority = (m) => {
+    const p = MODE_PRIORITY[String(m || "")];
+    return p === undefined ? 99 : p;
+  };
+  return sup
+    .map((text, index) => ({ text, p: priority(modes[index]), index }))
+    .sort((a, b) => a.p - b.p || a.index - b.index)
+    .map((x) => x.text);
+}
+
 // 候補カードと重複する既存カードを探す（§10.4 初期版・§28.6）。
 // 除外: status が merged / inactive のカード。
 // マッチ: (conceptKey非空で一致 かつ cardType一致) または normalizedQuestion一致。
@@ -169,9 +236,10 @@ export function findDuplicateCards(candidate, existingCards) {
 // - 既存が user 編集済みで回答が異なる → needs_review（§14：勝手に上書きしない）
 // - 回答が正規化一致 → merged（回答は既存維持、supplementをunion、sourceSessionIds追加）
 // - それ以外（回答が異なる） → needs_review（既存維持・pendingAnswerに新規退避）（§11.4）
-export function integrateAnswer(existingCard, newAnswer, newSupplement, newSessionId, now = new Date().toISOString()) {
+export function integrateAnswer(existingCard, newAnswer, newSupplement, newSessionId, now = new Date().toISOString(), newMode = "input") {
   const answer = String(newAnswer || "").trim();
   const supplement = toSupplement(newSupplement);
+  const mode = sanitizeStudyMode(newMode);
   const sameAnswer = normalizeAnswer(existingCard.canonicalAnswer) === normalizeAnswer(answer);
 
   const withSession = newSessionId && !(existingCard.sourceSessionIds || []).includes(newSessionId)
@@ -179,11 +247,18 @@ export function integrateAnswer(existingCard, newAnswer, newSupplement, newSessi
     : (existingCard.sourceSessionIds || []);
 
   if (sameAnswer) {
+    const merged = unionSupplementWithModes(
+      existingCard.supplement,
+      existingCard.supplementModes,
+      supplement,
+      mode
+    );
     return {
       result: "merged",
       card: {
         ...existingCard,
-        supplement: unionStrings(existingCard.supplement, supplement),
+        supplement: merged.supplement,
+        supplementModes: merged.supplementModes,
         sourceSessionIds: withSession,
         status: existingCard.status === "needs_review" ? existingCard.status : "active",
         updatedAt: now
@@ -200,6 +275,7 @@ export function integrateAnswer(existingCard, newAnswer, newSupplement, newSessi
       pendingAnswer: {
         canonicalAnswer: answer,
         supplement,
+        mode,
         sourceSessionId: newSessionId || ""
       },
       sourceSessionIds: withSession,
@@ -228,10 +304,16 @@ function sumReview(a = {}, b = {}) {
 
 // 手動統合（§15）。target に source を吸収し、source は merged にする。
 export function mergeCardData(target, source, now = new Date().toISOString()) {
+  const mergedSupplement = mergeSupplementLists([
+    { supplement: target.supplement, modes: target.supplementModes },
+    { supplement: source.supplement, modes: source.supplementModes }
+  ]);
+
   const mergedTarget = {
     ...target,
     sourceSessionIds: unionStrings(target.sourceSessionIds, source.sourceSessionIds, 50),
-    supplement: unionStrings(target.supplement, source.supplement),
+    supplement: mergedSupplement.supplement,
+    supplementModes: mergedSupplement.supplementModes,
     review: sumReview(target.review, source.review),
     createdAt: target.createdAt && source.createdAt
       ? (target.createdAt < source.createdAt ? target.createdAt : source.createdAt)

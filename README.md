@@ -2,22 +2,22 @@
 
 学習者が自分の言葉で説明し、その説明をAIが分析する学習支援サービス。詳細は `SPEC.md` を参照。
 
-このREADMEはPhase 8（復習フラッシュカード化・ノートに書き写す内容のAI生成・結果後のノート写真保存）まで完了時点の内容。SPEC §21「必須」機能は一通り実装済み。
+このREADMEはPhase 9（前回からの続き・学習モード・カード補足のモード順表示・リリカイ済みカードの復帰）まで完了時点の内容。SPEC §21「必須」機能は一通り実装済み。構築フェーズの経緯は `doc/build-plan.md` を参照。
 
 ## 画面構成
 
 | ページ | 役割 |
 |---|---|
 | `web/calendar.html` | 主要画面（CloudFrontのルート）。月間カレンダー → 日付詳細 → セッション詳細 → Markdown表示の3階層。日セルに新規カード数・復習予定数、上部に「今日の復習／要確認」件数、セッション詳細にノート写真を表示 |
-| `web/session.html` | 学習セッションの入力・保存・AI分析・カード候補の採用・ノート写真の添付 |
+| `web/session.html` | 学習セッションの入力・保存・AI分析・カード候補の採用・ノート写真の添付。学習モード選択と前回からの続き（資格・分野・テーマ・モードのプリフィル＋過去5テーマ候補＋クリア） |
 | `web/cards.html` | カード一覧・詳細・手動編集・要確認解決・手動統合 |
-| `web/review.html` | 今日の復習（質問→正解→3段階評価） |
+| `web/review.html` | 今日の復習（フラッシュカード。タップでめくる・リリカイ!/次のカードへ）。完了画面から「リリカイ済みカードを復習に戻す」 |
 
 `web/calendar-core.mjs` はカレンダーの純ロジック（月グリッド生成・日別集計）で、ブラウザと `node --test` の両方から使う。
 
 ## APIアクション
 
-`createSession` / `processSessionJob`(内部) / `getSession` / `listSessions` / `getSessionMarkdown` / `adoptCards` / `listCards` / `getCard` / `updateCard` / `checkDuplicates` / `mergeAnswerIntoCard` / `resolveConflict` / `mergeCardsManual` / `listDueCards` / `reviewCard` / `getNoteUploadUrl` / `getNoteImageUrls` / `attachNoteImages` / `health`
+`createSession` / `processSessionJob`(内部) / `getSession` / `listSessions` / `getSessionMarkdown` / `adoptCards` / `listCards` / `getCard` / `updateCard` / `checkDuplicates` / `mergeAnswerIntoCard` / `resolveConflict` / `mergeCardsManual` / `listDueCards` / `reviewCard` / `listMasteredCards` / `reactivateCard` / `getNoteUploadUrl` / `getNoteImageUrls` / `attachNoteImages` / `health`
 
 ## 構成
 
@@ -142,6 +142,8 @@ Front Matter（YAML）＋ 本文（今日の目的／自分で分からなかっ
 - `listDueCards` は `status=active` かつ `!review.mastered` かつ `nextReviewDate <= 今日(JST)` を返す。
 - **復習履歴**：`SK=REVIEW#{reviewId}` に1件ずつ保存（result・reviewedAt・previousNextReviewDate・newNextReviewDate、§16.4）。カード本体の `review` カウントにも反映。
 - **冪等性**：フロントがカード提示ごとに `reviewId` を発行。バックエンドは履歴を条件付きPut（`putNewItem`）し、二重送信時は加算せず `duplicate:true` を返す（§23.6）。
+- **補足のモード順表示（Phase 9）**：`listDueCards` は返却時に各カードの `supplement` を由来モード順（**高速周回→インプット→演習**）に並べ替える（`sortSupplementByMode`。表示専用で保存データは不変）。
+- **リリカイ済みの復帰（Phase 9）**：一度 mastered にしたカードも `review.html` 完了画面の「リリカイ済みカードを復習に戻す」から戻せる。`listMasteredCards` で一覧、`reactivateCard`（`cardId`）で `review.mastered=false`・`nextReviewDate=今日(JST)` にして当日の復習へ再表示（履歴カウントは維持）。
 
 ## ノート写真（Phase 7・§8）
 
@@ -158,6 +160,17 @@ Front Matter（YAML）＋ 本文（今日の目的／自分で分からなかっ
 ## ノートに書き写す内容（Phase 8）
 
 AI分析（`callOpenAIForAnalysis`）が、紙のノートにそのまま書き写せる短い箇条書き `noteText`（5〜10個・要点/定義/違い/条件/数値など・文字ベース）を生成する。セッション詳細（`session.html` の結果／`calendar.html`）に表示し、Markdown 本文に `## ノートに書き写す内容` として保存する。利用者はこれを見て手でノートに書き写し、その写真を「書き写したノートを保存」から `attachNoteImages` でセッションに残す。OCR等はせず、書き写す“お題”をAIが提示するだけ。
+
+## 学習モードと前回からの続き（Phase 9）
+
+学習の段階に応じてAIへ求めるものが違うため、セッションに**学習モード**を持たせる。
+
+- **モード（`session.mode` / `job.input.mode`）**：`input`（インプット＝頭に入れる）／`practice`（演習＝初回〜数回）／`fast`（高速周回＝最後の詰め）。`sanitizeStudyMode` で正規化（不正・未指定は `input`）。
+  - **分析（`buildAnalysisPrompt`）の力点**：input=基礎・定義・仕組みの体系整理と `noteText` 厚め／practice=わからない点を手厚く（曖昧点・誤解・確認質問を重視）／fast=覚えるべき点は簡潔に・注意点/弱点だけ・`noteText` は少なめ。
+  - **カード生成（`buildCardsPrompt`）の狙い**：input=基礎定義中心／practice=適用・条件・違い・弱点中心／fast=注意点・弱点に絞り新規は最小。
+  - Markdown の front matter に `mode:`、本文冒頭に `> モード: <ラベル>` を出力。`calendar.html` のセッション詳細・`session.html` の結果にも表示。
+- **カードへの由来モード**：`buildCardItem` はカードに `mode` と、各補足行の由来モードを表す並列配列 `supplementModes`（`supplement` と同じ長さ・順序）を持たせる。統合（`integrateAnswer` の merged / `mergeCardData`）でも行ごとのモードを維持する。表示時に `sortSupplementByMode` で 高速周回→インプット→演習 の順に並べる（旧カードで `supplementModes` が無い/長さ不一致なら並べ替えず元順＝後方互換）。
+- **前回からの続き（`session.html`・クライアント側）**：読込時に `listSessions` を1回呼び、直近セッションの `qualification`/`subject`/`topic`/`mode` を初期表示（すべて編集可）。過去の `topic`（非空・重複除去）から直近5件を「テーマ候補」チップに、テーマ欄横に「クリア」ボタンを置く。履歴が無ければ空＋モード既定=インプット。バックエンド変更なし。
 
 ## 将来Apple Speechを接続する場所
 

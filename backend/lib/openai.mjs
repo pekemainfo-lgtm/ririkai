@@ -1,5 +1,5 @@
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
-import { normalizeCardCandidates } from "./cards.mjs";
+import { normalizeCardCandidates, sanitizeStudyMode } from "./cards.mjs";
 
 const REGION = "ap-northeast-1";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1";
@@ -41,8 +41,31 @@ async function getOpenAIApiKey() {
   return secret.OPENAI_API_KEY;
 }
 
+// 学習モードの日本語ラベル。プロンプト・Markdown・UIで共用の意図。
+const MODE_LABELS = {
+  input: "インプット（頭に入れる段階）",
+  practice: "演習（初回〜数回）",
+  fast: "高速周回（最後の詰め）"
+};
+
+export function studyModeLabel(mode) {
+  return MODE_LABELS[sanitizeStudyMode(mode)];
+}
+
+// モードごとに分析の力点を変える指示（§Phase 9）。
+function analysisModeInstruction(mode) {
+  if (mode === "practice") {
+    return `学習モードは「演習（初回〜数回）」です。分からない点・つまずきを手厚く扱ってください。ambiguousPoints・misconceptions・confirmQuestions を重点的に厚く出し、知識の適用・条件・違いを掘り下げてください。noteText は演習で間違えやすい要点を中心に。`;
+  }
+  if (mode === "fast") {
+    return `学習モードは「高速周回（最後の詰め）」です。覚えるべき点は概ね把握できている前提で、簡潔にしてください。注意点・弱点・間違えやすい点だけを短くまとめ、冗長な説明は避ける。noteText は最終確認で見返す要点のみ少なめ（3〜6個目安）にしてください。`;
+  }
+  return `学習モードは「インプット（頭に入れる段階）」です。基礎・定義・仕組みの体系的な整理を重視してください。noteText は後で見返す土台になるよう要点を漏れなく厚め（7〜10個目安）にしてください。`;
+}
+
 function buildAnalysisPrompt(input) {
   const { subject = "", topic = "", purpose = "", notUnderstoodNote = "", transcript = "" } = input;
+  const mode = sanitizeStudyMode(input.mode);
 
   const purposeInstruction = purpose
     ? `「今日の目的」が入力されています。文字起こしの内容から、目的が達成されたかを判定してください。判定は "達成" "一部達成" "未達成" "判定不能" のいずれかとし、短い理由を必ず添えてください。`
@@ -64,6 +87,8 @@ function buildAnalysisPrompt(input) {
   誤解があれば、書き換えずにmisconceptionsに指摘として記載する
 
 ${purposeInstruction}
+
+${analysisModeInstruction(mode)}
 
 判定ルール：
 以下の場合はエラーJSONだけを返す。
@@ -98,6 +123,7 @@ noteText のルール：
 - そのまま書き写せる完結した表現にする（「〜とは」「A=…」「AとBの違い: …」など）
 
 入力情報：
+学習モード: ${MODE_LABELS[mode]}
 分野: ${subject}
 テーマ: ${topic || "未指定"}
 今日の目的: ${purpose || "なし"}
@@ -279,8 +305,20 @@ export async function callOpenAIForAnalysis(input) {
   throw e;
 }
 
+// モードごとにカードの狙いを変える指示（§Phase 9）。
+function cardsModeInstruction(mode) {
+  if (mode === "practice") {
+    return `学習モードは「演習」です。分からなかった点・曖昧な点・誤解の可能性を優先し、知識の適用・条件・違い（difference/condition/comparison）を問うカードを厚めに作ってください。`;
+  }
+  if (mode === "fast") {
+    return `学習モードは「高速周回（最後の詰め）」です。新規カードは最小限にし、間違えやすい注意点・弱点（misconception/condition）だけに絞ってください。既に分かりきった基礎の定義カードは作らない。`;
+  }
+  return `学習モードは「インプット」です。基礎・定義・仕組み（definition/component/cause_effect）を中心に、後で土台となるカードを作ってください。`;
+}
+
 function buildCardsPrompt(input, analysis) {
   const { subject = "", topic = "", qualification = "", notUnderstoodNote = "", transcript = "" } = input;
+  const mode = sanitizeStudyMode(input.mode);
   const a = analysis || {};
 
   const context = [
@@ -300,6 +338,8 @@ function buildCardsPrompt(input, analysis) {
 - 優先: 曖昧な点・誤解の可能性・分からなかった点・試験で重要な条件・前提になる用語
 - 学習者の誤りをそのまま正解にしない。canonicalAnswerは一般に正しい内容にする
 - JSON以外を絶対に出さない。Markdown・コードブロック・前置きは禁止
+
+${cardsModeInstruction(mode)}
 
 各カードの作り方：
 - question: 短い一問一答の問い
@@ -328,6 +368,7 @@ function buildCardsPrompt(input, analysis) {
   ]
 }
 
+学習モード: ${MODE_LABELS[mode]}
 資格・コース: ${qualification || "未指定"}
 分野: ${subject}
 テーマ: ${topic || "未指定"}

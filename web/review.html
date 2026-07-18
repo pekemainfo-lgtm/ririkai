@@ -70,6 +70,13 @@
   .btn-next { background: var(--next); }
   .btn-note { font-size: 0.72rem; color: var(--muted); text-align: center; margin-top: 8px; }
 
+  #masteredArea { margin-top: 20px; text-align: left; }
+  #masteredArea h2 { font-size: 1.05rem; }
+  .mastered-item { border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin-top: 8px; }
+  .mastered-item .mq { font-weight: bold; }
+  .mastered-item .ma { font-size: 0.85rem; color: var(--muted); margin-top: 2px; }
+  .mastered-item button { margin-top: 8px; padding: 8px 12px; font-size: 0.85rem; background: var(--next); color: #fff; border: none; border-radius: 8px; cursor: pointer; }
+  .mastered-item button:disabled { opacity: 0.5; cursor: not-allowed; }
   details.apibox { margin-bottom: 12px; }
   #apiUrl { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font-size: 0.8rem; margin-top: 4px; }
   details.apibox button { margin-top: 8px; background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
@@ -123,7 +130,14 @@
 
   <div id="doneArea" hidden>
     <p class="status ok" id="doneMsg"></p>
-    <p><a href="calendar.html">カレンダーへ戻る</a></p>
+
+    <div id="masteredArea" hidden>
+      <h2>リリカイ済みカードを復習に戻す</h2>
+      <p class="btn-note" style="text-align:left;">「リリカイ!」で外したカードです。やっぱり理解できていないと感じたら「復習に戻す」で当日の復習に再表示されます。</p>
+      <div id="masteredList"></div>
+    </div>
+
+    <p style="margin-top:16px;"><a href="calendar.html">カレンダーへ戻る</a></p>
   </div>
 
 <script src="shared.js"></script>
@@ -156,6 +170,7 @@
         $("cardArea").hidden = true;
         $("doneArea").hidden = false;
         $("doneMsg").textContent = "今日の復習はありません。お疲れさまでした。";
+        loadMastered();
         return;
       }
       setStatus("", "");
@@ -172,6 +187,7 @@
       $("progress").textContent = "";
       setStatus("", "");
       $("doneMsg").textContent = `復習完了！ ${queue.length}枚を確認しました。「リリカイ!」したカードは今後の復習に出ません。`;
+      loadMastered();
       return;
     }
     const card = queue[index];
@@ -241,6 +257,56 @@
   function setButtonsDisabled(disabled) {
     $("rikaiBtn").disabled = disabled;
     $("nextBtn").disabled = disabled;
+  }
+
+  // 「リリカイ済み（mastered）」カードを一覧し、復習へ戻せるようにする。
+  async function loadMastered() {
+    try {
+      const data = await callApi({ action: "listMasteredCards" });
+      renderMastered(data.cards || []);
+    } catch (error) {
+      // 失敗しても復習完了表示は妨げない。
+    }
+  }
+
+  function renderMastered(cards) {
+    const area = $("masteredArea");
+    const list = $("masteredList");
+    list.innerHTML = "";
+    if (!cards.length) { area.hidden = true; return; }
+    area.hidden = false;
+    cards.forEach((card) => {
+      const div = document.createElement("div");
+      div.className = "mastered-item";
+
+      const q = document.createElement("div");
+      q.className = "mq";
+      q.textContent = card.question || "";
+      const a = document.createElement("div");
+      a.className = "ma";
+      a.textContent = card.canonicalAnswer || "";
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "復習に戻す";
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        btn.textContent = "戻しています...";
+        try {
+          await callApi({ action: "reactivateCard", cardId: card.cardId });
+          div.remove();
+          if (!list.children.length) area.hidden = true;
+        } catch (error) {
+          btn.disabled = false;
+          btn.textContent = "復習に戻す（再試行）";
+        }
+      });
+
+      div.appendChild(q);
+      div.appendChild(a);
+      div.appendChild(btn);
+      list.appendChild(div);
+    });
   }
 
   // カードのタップでめくる（詳細ボタンのタップはめくらない）。

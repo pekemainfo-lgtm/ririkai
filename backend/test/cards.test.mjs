@@ -12,7 +12,9 @@ import {
   mergeCardData,
   computeNextReviewDate,
   applyReview,
-  isReviewResult
+  isReviewResult,
+  sanitizeStudyMode,
+  sortSupplementByMode
 } from "../lib/cards.mjs";
 
 test("normalizeQuestion: 表記ゆれ（空白・句読点・大小）を吸収する", () => {
@@ -276,4 +278,109 @@ test("applyReview: again→翌日再スケジュール・againCount++・masteryL
   assert.equal(review.masteryLevel, 2);
   assert.equal(review.mastered, false);
   assert.equal(review.reviewCount, 2);
+});
+
+// --- Phase 9: 学習モード ---
+
+test("sanitizeStudyMode: 妥当値は保持・不正/未指定はinput", () => {
+  assert.equal(sanitizeStudyMode("input"), "input");
+  assert.equal(sanitizeStudyMode("practice"), "practice");
+  assert.equal(sanitizeStudyMode("fast"), "fast");
+  assert.equal(sanitizeStudyMode("bogus"), "input");
+  assert.equal(sanitizeStudyMode(""), "input");
+  assert.equal(sanitizeStudyMode(undefined), "input");
+});
+
+test("buildCardItem: modeとsupplementModes（長さ一致・全要素=mode）が入る", () => {
+  const item = buildCardItem({
+    userId: "naohiro",
+    cardId: "card_m",
+    question: "q",
+    canonicalAnswer: "a",
+    supplement: ["s1", "s2", ""], // 空は除去される
+    mode: "fast"
+  });
+  assert.equal(item.mode, "fast");
+  assert.deepEqual(item.supplement, ["s1", "s2"]);
+  assert.deepEqual(item.supplementModes, ["fast", "fast"]);
+});
+
+test("buildCardItem: mode未指定はinput、不正はinput", () => {
+  const a = buildCardItem({ userId: "u", cardId: "c1", question: "q", canonicalAnswer: "a", supplement: ["x"] });
+  assert.equal(a.mode, "input");
+  assert.deepEqual(a.supplementModes, ["input"]);
+  const b = buildCardItem({ userId: "u", cardId: "c2", question: "q", canonicalAnswer: "a", supplement: ["x"], mode: "weird" });
+  assert.equal(b.mode, "input");
+});
+
+test("sortSupplementByMode: 高速周回→インプット→演習の順、同モードは安定", () => {
+  const sup = ["基礎1", "適用1", "注意1", "基礎2", "注意2"];
+  const modes = ["input", "practice", "fast", "input", "fast"];
+  assert.deepEqual(
+    sortSupplementByMode(sup, modes),
+    ["注意1", "注意2", "基礎1", "基礎2", "適用1"]
+  );
+});
+
+test("sortSupplementByMode: 未知モードは末尾", () => {
+  const sup = ["A", "B", "C"];
+  const modes = ["practice", "", "fast"];
+  assert.deepEqual(sortSupplementByMode(sup, modes), ["C", "A", "B"]);
+});
+
+test("sortSupplementByMode: supplementModes欠落/長さ不一致は元順（後方互換）", () => {
+  assert.deepEqual(sortSupplementByMode(["A", "B"], undefined), ["A", "B"]);
+  assert.deepEqual(sortSupplementByMode(["A", "B", "C"], ["fast"]), ["A", "B", "C"]);
+});
+
+test("integrateAnswer(merged): 新規補足にnewModeが付き、既存補足のモードは維持", () => {
+  const existing = {
+    ...existingDefinition,
+    supplement: ["既存補足"],
+    supplementModes: ["input"]
+  };
+  const { result, card } = integrateAnswer(
+    existing,
+    existingDefinition.canonicalAnswer, // 同一回答→merged
+    ["高速で気づいた注意点"],
+    "session_e",
+    "2026-07-18T00:00:00.000Z",
+    "fast"
+  );
+  assert.equal(result, "merged");
+  assert.deepEqual(card.supplement, ["既存補足", "高速で気づいた注意点"]);
+  assert.deepEqual(card.supplementModes, ["input", "fast"]);
+  // 表示順では fast が先頭に来る
+  assert.deepEqual(
+    sortSupplementByMode(card.supplement, card.supplementModes),
+    ["高速で気づいた注意点", "既存補足"]
+  );
+});
+
+test("integrateAnswer(needs_review): pendingAnswerにmodeを退避", () => {
+  const { result, card } = integrateAnswer(
+    existingDefinition,
+    "矛盾する別の答え",
+    ["補足"],
+    "session_f",
+    "2026-07-18T00:00:00.000Z",
+    "practice"
+  );
+  assert.equal(result, "needs_review");
+  assert.equal(card.pendingAnswer.mode, "practice");
+});
+
+test("mergeCardData: supplementとsupplementModesの整列を保つ", () => {
+  const target = { ...existingDefinition, supplement: ["注意T"], supplementModes: ["fast"] };
+  const source = {
+    ...existingDefinition,
+    cardId: "card_src2",
+    supplement: ["基礎S"],
+    supplementModes: ["input"],
+    review: { reviewCount: 1 }
+  };
+  const { target: t } = mergeCardData(target, source, "2026-07-18T00:00:00.000Z");
+  assert.equal(t.supplement.length, t.supplementModes.length);
+  assert.deepEqual(t.supplement, ["注意T", "基礎S"]);
+  assert.deepEqual(t.supplementModes, ["fast", "input"]);
 });

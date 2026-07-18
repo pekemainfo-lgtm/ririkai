@@ -96,6 +96,15 @@
   .note-item .note-state.err { color: var(--error); }
   .note-item button { margin: 0; padding: 5px 10px; font-size: 0.8rem; }
   .note-item button.note-remove { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+  .mode-group { display: flex; gap: 8px; margin-top: 6px; }
+  .mode-opt { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; margin: 0; padding: 9px 6px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-size: 0.92rem; }
+  .mode-opt input { width: auto; margin: 0; }
+  .mode-opt:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); font-weight: bold; }
+  .topic-row { display: flex; gap: 8px; align-items: flex-start; }
+  .topic-row input { flex: 1; }
+  .mini-btn { margin-top: 4px; padding: 8px 12px; font-size: 0.85rem; background: transparent; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; flex: none; }
+  .topic-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; align-items: center; }
+  .topic-chip { font-size: 0.8rem; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--accent); cursor: pointer; }
 </style>
 </head>
 <body>
@@ -120,6 +129,14 @@
       <label for="studyDate">学習日</label>
       <input type="date" id="studyDate">
 
+      <label>学習モード</label>
+      <div class="mode-group" id="modeGroup">
+        <label class="mode-opt"><input type="radio" name="mode" value="input" checked>インプット</label>
+        <label class="mode-opt"><input type="radio" name="mode" value="practice">演習</label>
+        <label class="mode-opt"><input type="radio" name="mode" value="fast">高速周回</label>
+      </div>
+      <p class="hint" id="modeHint"></p>
+
       <label for="qualification">資格・コース</label>
       <input type="text" id="qualification" placeholder="例: AWS SOA-C03">
 
@@ -127,7 +144,11 @@
       <input type="text" id="subject" placeholder="例: Monitoring" required>
 
       <label for="topic">テーマ</label>
-      <input type="text" id="topic" placeholder="例: CloudWatchとCloudTrail">
+      <div class="topic-row">
+        <input type="text" id="topic" placeholder="例: CloudWatchとCloudTrail">
+        <button type="button" id="clearTopicBtn" class="mini-btn">クリア</button>
+      </div>
+      <div class="topic-chips" id="topicChips"></div>
 
       <label for="durationMinutes">学習時間（分）</label>
       <input type="number" id="durationMinutes" value="25" min="1">
@@ -166,6 +187,7 @@
   <div class="status" id="status"></div>
 
   <div class="result" id="result" hidden>
+    <p class="hint" id="resultMode"></p>
     <h2>今日の目的の達成判定</h2>
     <p id="purposeJudgement"></p>
 
@@ -352,6 +374,72 @@
     }
   });
 
+  // --- 学習モード ---
+  const MODE_LABELS = { input: "インプット", practice: "演習", fast: "高速周回" };
+  const MODE_HINTS = {
+    input: "頭に入れる段階。基礎・定義・仕組みを体系的に。ノートに書き写す内容を厚めに出します。",
+    practice: "演習（初回〜数回）。わからない点・つまずきを手厚く。確認質問や誤解の指摘が増えます。",
+    fast: "最後の詰め・高速周回。覚えるべき点は簡潔に。注意点・弱点だけを絞って出します。"
+  };
+  function selectedMode() {
+    const el = document.querySelector('input[name="mode"]:checked');
+    return el ? el.value : "input";
+  }
+  function setMode(mode) {
+    const el = document.querySelector(`input[name="mode"][value="${mode}"]`)
+      || document.querySelector('input[name="mode"][value="input"]');
+    el.checked = true;
+    updateModeHint();
+  }
+  function updateModeHint() {
+    $("modeHint").textContent = MODE_HINTS[selectedMode()] || "";
+  }
+
+  // --- 前回からの続き（資格・分野・テーマ・モードのプリフィル＋過去テーマ候補） ---
+  function renderTopicChips(topics) {
+    const box = $("topicChips");
+    box.innerHTML = "";
+    if (!topics.length) return;
+    const label = document.createElement("span");
+    label.className = "hint";
+    label.textContent = "過去のテーマ:";
+    box.appendChild(label);
+    topics.forEach((t) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "topic-chip";
+      chip.textContent = t;
+      chip.addEventListener("click", () => { $("topic").value = t; });
+      box.appendChild(chip);
+    });
+  }
+
+  async function prefillFromHistory() {
+    try {
+      const data = await callApi({ action: "listSessions", limit: 50 });
+      const sessions = data.sessions || [];
+      if (sessions.length === 0) return;
+      // listSessions は SK（作成時刻）降順＝新しい順。直近セッションの値を初期表示に使う。
+      const latest = sessions[0];
+      if (latest) {
+        if (!$("qualification").value) $("qualification").value = latest.qualification || "";
+        if (!$("subject").value) $("subject").value = latest.subject || "";
+        if (!$("topic").value) $("topic").value = latest.topic || "";
+        if (latest.mode) setMode(latest.mode);
+      }
+      // 過去のテーマ（非空・重複除去）から直近5件をチップに。
+      const topics = [];
+      for (const s of sessions) {
+        const t = String(s.topic || "").trim();
+        if (t && !topics.includes(t)) topics.push(t);
+        if (topics.length >= 5) break;
+      }
+      renderTopicChips(topics);
+    } catch (error) {
+      // 履歴が取れなくても新規作成はできるので、UIは黙って既定のまま続行する。
+    }
+  }
+
   function todayJst() {
     const now = new Date();
     const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
@@ -376,6 +464,7 @@
 
   function renderResult(session) {
     $("result").hidden = false;
+    $("resultMode").textContent = "モード: " + (MODE_LABELS[session.mode] || MODE_LABELS.input);
     $("purposeJudgement").textContent = session.purposeJudgement
       ? `${session.purposeJudgement.status}（${session.purposeJudgement.reason}）`
       : "(今日の目的は未入力、または判定なし)";
@@ -650,6 +739,7 @@
     const payload = {
       action: "createSession",
       studyDate: $("studyDate").value || todayJst(),
+      mode: selectedMode(),
       qualification: $("qualification").value.trim(),
       subject: $("subject").value.trim(),
       topic: $("topic").value.trim(),
@@ -737,8 +827,13 @@
     setStatus("API URLを保存しました。", "ok");
   });
 
+  $("clearTopicBtn").addEventListener("click", () => { $("topic").value = ""; $("topic").focus(); });
+  $("modeGroup").addEventListener("change", updateModeHint);
+
   $("studyDate").value = todayJst();
   $("apiUrl").value = getApiUrl();
+  updateModeHint();
+  prefillFromHistory();
 </script>
 </body>
 </html>
