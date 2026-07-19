@@ -200,6 +200,10 @@
     <h2>誤解の可能性</h2>
     <ul id="misconceptions"></ul>
 
+    <h2>🎧 文字起こしが不明瞭な箇所</h2>
+    <p class="hint">音声認識エラーや意味を特定できない用語です。理解度評価・確認質問・復習・ノートには使いません。</p>
+    <ul id="unclearTranscript"></ul>
+
     <h2>確認質問</h2>
     <ol id="confirmQuestions"></ol>
 
@@ -462,6 +466,27 @@
     });
   }
 
+  // 文字起こしが不明瞭な箇所（{excerpt, reason} の配列）を「該当 — 理由」で表示する。
+  function renderUnclear(elId, items) {
+    const el = $(elId);
+    el.innerHTML = "";
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) {
+      const li = document.createElement("li");
+      li.style.color = "var(--muted)";
+      li.textContent = "(なし)";
+      el.appendChild(li);
+      return;
+    }
+    list.forEach((item) => {
+      const excerpt = item && typeof item === "object" ? (item.excerpt || "") : String(item || "");
+      const reason = item && typeof item === "object" ? (item.reason || "") : "";
+      const li = document.createElement("li");
+      li.textContent = reason ? `${excerpt} — ${reason}` : excerpt;
+      el.appendChild(li);
+    });
+  }
+
   function renderResult(session) {
     $("result").hidden = false;
     $("resultMode").textContent = "モード: " + (MODE_LABELS[session.mode] || MODE_LABELS.input);
@@ -471,6 +496,7 @@
     renderList("understoodPoints", session.understoodPoints);
     renderList("ambiguousPoints", session.ambiguousPoints);
     renderList("misconceptions", session.misconceptions);
+    renderUnclear("unclearTranscript", session.unclearTranscript);
     renderList("confirmQuestions", session.confirmQuestions);
     renderList("reviewItems", session.reviewItems);
     renderList("noteText", session.noteText);

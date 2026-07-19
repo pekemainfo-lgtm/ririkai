@@ -56,6 +56,17 @@ function numberedList(items) {
   return list.map((item, index) => `${index + 1}. ${item}`).join("\n");
 }
 
+// 文字起こしが不明瞭な箇所（{excerpt, reason} の配列 or 文字列）を「該当 — 理由」で出す。
+function unclearList(items) {
+  const list = Array.isArray(items) ? items : [];
+  if (list.length === 0) return "(なし)";
+  return list.map((item) => {
+    const excerpt = item && typeof item === "object" ? String(item.excerpt || "") : String(item || "");
+    const reason = item && typeof item === "object" ? String(item.reason || "") : "";
+    return reason ? `- ${excerpt} — ${reason}` : `- ${excerpt}`;
+  }).join("\n");
+}
+
 // §4.3/4.4 のFront Matter・本文構成に沿ってMarkdownを組み立てる。
 // カード(関連カード)はPhase 4以降で追加するため、Phase 2では空のまま出力する。
 export function buildSessionMarkdown(session) {
@@ -90,6 +101,9 @@ export function buildSessionMarkdown(session) {
     "",
     "### 確認質問",
     numberedList(session.confirmQuestions),
+    "",
+    "## 文字起こしが不明瞭な箇所",
+    unclearList(session.unclearTranscript),
     "",
     "## 復習事項",
     bulletList(session.reviewItems),

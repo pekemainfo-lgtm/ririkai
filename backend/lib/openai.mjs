@@ -1,5 +1,6 @@
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { normalizeCardCandidates, sanitizeStudyMode } from "./cards.mjs";
+import { normalizeAnalysis } from "./analysis.mjs";
 
 const REGION = "ap-northeast-1";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1";
@@ -9,14 +10,6 @@ const MAX_OUTPUT_TOKENS = 3000;
 const OPENAI_TIMEOUT_MS = 120000;
 
 const secretsClient = new SecretsManagerClient({ region: REGION });
-
-function toStringArray(value, max = 15) {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((x) => String(x || "").trim())
-    .filter(Boolean)
-    .slice(0, max);
-}
 
 async function getOpenAIApiKey() {
   const response = await secretsClient.send(
@@ -68,32 +61,66 @@ function buildAnalysisPrompt(input) {
   const mode = sanitizeStudyMode(input.mode);
 
   const purposeInstruction = purpose
-    ? `「今日の目的」が入力されています。文字起こしの内容から、目的が達成されたかを判定してください。判定は "達成" "一部達成" "未達成" "判定不能" のいずれかとし、短い理由を必ず添えてください。`
+    ? `「今日の目的」が入力されています。文字起こしに実際に含まれる内容だけを根拠に、目的の達成度を "達成" "一部達成" "未達成" "判定材料不足" のいずれかで判定し、短い理由を添えてください。理由には入力に存在する内容だけを使い、入力にないサービス名・論点を持ち込まないこと。判定できるだけの具体的な発言が無ければ、無理に決めず "判定材料不足" にしてください。`
     : `「今日の目的」は未入力です。purposeJudgementはnullにしてください。`;
 
   return `
 あなたは資格試験の学習を支援するAIです。
-学習者が自分の言葉で説明した内容（文字起こし）を分析し、JSONだけを返してください。
+学習者が自分の言葉で説明した内容（音声認識による文字起こし）を分析し、JSONだけを返してください。
+文字起こしには音声認識エラー（意味の通らない語・聞き間違い）が混ざりうる前提で扱ってください。
 
 最重要方針：
 - 学習者の発言内容を正しい内容へ書き換えない。誤解があってもそのまま扱う
-- 不確かな内容は断定しない
+- 不確かな内容は断定しない。確信が高くない判断は「確認が必要」または「文字起こし不明瞭」に回す
 - 学習者を責めない
 - JSON以外を絶対に出さない。Markdown、コードブロック、前置きは禁止
 
+音声認識エラー・不明瞭・用語不明の扱い（最重要）：
+- 意味が通らない文字列を推測して補完しない。無理に解釈しない
+- 文章として成立していない箇所は、学習者の理解不足や誤解として扱わず、unclearTranscript（文字起こしが不明瞭な箇所）に分離する
+- 意味を高い確度で特定できない用語（例：文脈に合わない語、実在を確認できない用語）は、既存のAWSサービス名や一般概念に無理やり変換しない。unclearTranscript に「用語を特定できない」として入れる。候補が思いつく場合も断定せず「○○の聞き間違いの可能性」と表現する
+- unclearTranscript に入れた内容は、understoodPoints / ambiguousPoints / misconceptions / confirmQuestions / reviewItems / noteText のいずれにも使わない
+
+各区分の定義（重複させない。1つの内容は最も適切な1区分だけに入れる）：
+- understoodPoints：意味が明確で、内容もおおむね正しい発言だけ
+- ambiguousPoints：学習者自身の説明が曖昧だが、文章としては成立しているもの。文字起こしエラーはここに混ぜない
+- misconceptions：次をすべて満たす時だけ。①発言内容が明確 ②学習者の主張を特定できる ③技術的に誤っている可能性が高い ④単なる音声認識エラーではない。断定できない場合は misconceptions に入れず、confirmQuestions に「確認が必要」として回す
+- unclearTranscript：音声認識エラーの可能性が高い箇所、または意味を特定できない用語。excerpt に元の該当箇所、reason に理由（例「音声認識エラーの可能性が高く内容を評価できません」「AWS用語として意味を特定できません」「用語を特定できないため元の発言を確認してください」）
+
+文脈混入の禁止：
+- 判断材料は「入力された文字起こし・今回の学習テーマ・自分で分からなかった点」だけ。ここに無い論点・AWSサービス名・話題を生成しない
+- 過去の別セッションや一般論から、今回の発言に無いトピックを持ち込まない
+
 表記修正のルール：
 - polishedTranscriptは、IAMやEC2のような明白な固有名詞・用語の表記揺れのみ修正する
-- 意味を変える書き換え（例："CloudTrailはCPU使用率を監視する" を "CloudWatchは..." に直す）は絶対に禁止。
-  誤解があれば、書き換えずにmisconceptionsに指摘として記載する
+- 意味を変える書き換えは禁止（誤解は書き換えず misconceptions に指摘）。意味不明な箇所は無理に直さずそのまま残す
 
-${purposeInstruction}
+confirmQuestions（確認質問）の優先順位：
+1. 明確な誤解を修正する質問
+2. 学習者が曖昧に説明した内容を、自力で説明させる質問
+3. 今回の学習テーマの中心事項を確認する質問
+- 文字起こしエラーや意味を特定できない用語について、知識問題を作らない（例「○○とは何ですか？」は禁止）。必要なら「『○○』と文字起こしされていますが、元の用語を確認してください」という音声再確認の案内にとどめる（知識確認ではない）
+
+reviewItems（復習事項）のルール：
+- 今回の発言から確認された弱点（誤解・説明できなかった重要点・混同）だけに絞る
+- 教科書的な一般項目を広く並べない。今回理解できていた内容は入れない
+- 不明瞭・用語不明の箇所からは作らない
+
+noteText（ノートに書き写す内容）のルール：
+- 「今回の修正点」だけを書く：明確に誤解していた内容／説明できなかった重要事項／混同していた概念／次までに覚え直す短い修正点
+- 理解できている内容や一般論は原則入れない
+- 1項目は1行の短い修正メモにする
+- 該当が無ければ空配列でよい
 
 ${analysisModeInstruction(mode)}
+
+${purposeInstruction}
 
 判定ルール：
 以下の場合はエラーJSONだけを返す。
 - 学習内容がほぼない
 - 雑談が中心で分析できる内容がない
+- 文字起こしの大半が意味をなさず、評価できる学習内容が無い
 
 エラーJSON形式：
 {
@@ -102,7 +129,7 @@ ${analysisModeInstruction(mode)}
   "message": "学習内容として判定できませんでした。"
 }
 
-通常時は必ず次のJSON形式だけを返す。
+通常時は必ず次のJSON形式だけを返す（不明瞭で該当が無い配列は空配列にする）。
 
 {
   "status": "ok",
@@ -110,17 +137,12 @@ ${analysisModeInstruction(mode)}
   "understoodPoints": ["理解できている点"],
   "ambiguousPoints": ["曖昧な点"],
   "misconceptions": ["誤解の可能性"],
+  "unclearTranscript": [ { "excerpt": "文字起こしの不明瞭な該当箇所", "reason": "音声認識エラーの可能性/用語を特定できない 等" } ],
   "confirmQuestions": ["確認質問"],
-  "reviewItems": ["復習すべき事項"],
-  "noteText": ["紙のノートにそのまま書き写せる短い箇条書き"],
-  "purposeJudgement": { "status": "達成", "reason": "短い理由" }
+  "reviewItems": ["今回確認された弱点に絞った復習事項"],
+  "noteText": ["今回の修正点だけの短い箇条書き"],
+  "purposeJudgement": { "status": "達成 | 一部達成 | 未達成 | 判定材料不足", "reason": "入力にある内容だけを根拠にした短い理由" }
 }
-
-noteText のルール：
-- 学習者が紙のノートに手で書き写すことを想定した、短い箇条書きを5〜10個
-- 試験で使う要点・定義・違い・条件・数値・コマンド・例外を優先する
-- 1項目は1行に収まる短さにする。長い説明文にしない
-- そのまま書き写せる完結した表現にする（「〜とは」「A=…」「AとBの違い: …」など）
 
 入力情報：
 学習モード: ${MODE_LABELS[mode]}
@@ -167,43 +189,6 @@ function extractJsonText(text) {
   }
 
   return text.trim();
-}
-
-function normalizeAnalysis(parsed) {
-  if (!parsed || typeof parsed !== "object") {
-    return {
-      status: "error",
-      errorCode: "AI_INVALID_JSON",
-      message: "AIの出力形式が不正です。"
-    };
-  }
-
-  if (parsed.status === "error") {
-    return {
-      status: "error",
-      errorCode: String(parsed.errorCode || "NOT_STUDY_CONTENT"),
-      message: String(parsed.message || "学習内容として判定できませんでした。")
-    };
-  }
-
-  const purposeJudgement = parsed.purposeJudgement && parsed.purposeJudgement.status
-    ? {
-        status: String(parsed.purposeJudgement.status || "").trim(),
-        reason: String(parsed.purposeJudgement.reason || "").trim()
-      }
-    : null;
-
-  return {
-    status: "ok",
-    polishedTranscript: String(parsed.polishedTranscript || "").trim(),
-    understoodPoints: toStringArray(parsed.understoodPoints),
-    ambiguousPoints: toStringArray(parsed.ambiguousPoints),
-    misconceptions: toStringArray(parsed.misconceptions),
-    confirmQuestions: toStringArray(parsed.confirmQuestions),
-    reviewItems: toStringArray(parsed.reviewItems),
-    noteText: toStringArray(parsed.noteText),
-    purposeJudgement
-  };
 }
 
 function sleep(ms) {
@@ -321,11 +306,16 @@ function buildCardsPrompt(input, analysis) {
   const mode = sanitizeStudyMode(input.mode);
   const a = analysis || {};
 
+  const unclear = (a.unclearTranscript || [])
+    .map((u) => (u && typeof u === "object" ? u.excerpt : String(u || "")))
+    .filter(Boolean);
+
   const context = [
     `曖昧な点: ${(a.ambiguousPoints || []).join(" / ") || "なし"}`,
     `誤解の可能性: ${(a.misconceptions || []).join(" / ") || "なし"}`,
     `復習事項: ${(a.reviewItems || []).join(" / ") || "なし"}`,
-    `自分で分からなかった点: ${notUnderstoodNote || "なし"}`
+    `自分で分からなかった点: ${notUnderstoodNote || "なし"}`,
+    `文字起こしが不明瞭な箇所（カード化しない）: ${unclear.join(" / ") || "なし"}`
   ].join("\n");
 
   return `
@@ -334,9 +324,12 @@ function buildCardsPrompt(input, analysis) {
 
 最重要方針：
 - カードを大量に作らない。1セッションにつき3〜10枚以内
-- 復習価値のあるカードが3枚未満なら、無理に3枚作らない（少なくてよい）
-- 優先: 曖昧な点・誤解の可能性・分からなかった点・試験で重要な条件・前提になる用語
+- 復習価値のあるカードが3枚未満なら、無理に3枚作らない（少なくてよい・0枚でもよい）
+- 優先: 今回確認された弱点（誤解・曖昧な点・分からなかった点）。今回理解できていた内容はカード化しない
 - 学習者の誤りをそのまま正解にしない。canonicalAnswerは一般に正しい内容にする
+- 意味の通らない文・音声認識エラーの疑いがある箇所（「文字起こしが不明瞭な箇所」）からはカードを作らない
+- 意味を高い確度で特定できない用語からカードを作らない。既存のAWSサービス名や一般概念に無理やり変換しない。断定できない用語はカード化しない
+- 入力の文字起こし・テーマ・分析に無いサービス名・論点を作らない（文脈混入の禁止）
 - JSON以外を絶対に出さない。Markdown・コードブロック・前置きは禁止
 
 ${cardsModeInstruction(mode)}

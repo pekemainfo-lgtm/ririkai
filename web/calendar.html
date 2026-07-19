@@ -318,6 +318,8 @@
         ${renderPointList(s.ambiguousPoints)}
         <h2>誤解の可能性</h2>
         ${renderPointList(s.misconceptions)}
+        <h2>🎧 文字起こしが不明瞭な箇所</h2>
+        ${renderPointList((s.unclearTranscript || []).map((u) => (u && typeof u === "object" ? (u.reason ? u.excerpt + " — " + u.reason : u.excerpt) : String(u || ""))))}
         <h2>確認質問</h2>
         ${confirmHtml}
         <h2>復習事項</h2>

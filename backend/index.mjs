@@ -140,6 +140,7 @@ async function createSession(body) {
     understoodPoints: [],
     ambiguousPoints: [],
     misconceptions: [],
+    unclearTranscript: [],
     confirmQuestions: [],
     reviewItems: [],
     noteText: [],
@@ -272,6 +273,7 @@ async function processSessionJob(body) {
       understoodPoints: analysis.understoodPoints,
       ambiguousPoints: analysis.ambiguousPoints,
       misconceptions: analysis.misconceptions,
+      unclearTranscript: analysis.unclearTranscript,
       confirmQuestions: analysis.confirmQuestions,
       reviewItems: analysis.reviewItems,
       noteText: analysis.noteText
@@ -288,6 +290,7 @@ async function processSessionJob(body) {
       understoodPoints: analysis.understoodPoints,
       ambiguousPoints: analysis.ambiguousPoints,
       misconceptions: analysis.misconceptions,
+      unclearTranscript: analysis.unclearTranscript,
       confirmQuestions: analysis.confirmQuestions,
       reviewItems: analysis.reviewItems,
       noteText: analysis.noteText,
